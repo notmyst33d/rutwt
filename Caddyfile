@@ -1,0 +1,15 @@
+http://:42069 {
+    reverse_proxy /api* http://localhost:6969
+    reverse_proxy /* http://localhost:5173
+}
+
+http://:42070 {
+    route /api* {
+        reverse_proxy http://localhost:6969
+    }
+    route /* {
+        encode gzip
+        try_files {path} index.html
+        file_server
+    }
+}
