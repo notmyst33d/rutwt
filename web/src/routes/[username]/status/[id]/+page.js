@@ -7,7 +7,7 @@ export async function load({ params, fetch, depends }) {
             "Authorization": `Bearer ${window.localStorage.getItem("token")}`
         }
     });
-    const commentsResponse = await fetch(`/api/posts/comments?id=${params.id}&username=${params.username}`, {
+    const commentsResponse = await fetch(`/api/posts/find?id=${params.id}&comments=true`, {
         headers: {
             "Authorization": `Bearer ${window.localStorage.getItem("token")}`
         }

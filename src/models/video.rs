@@ -5,21 +5,23 @@ use crate::cond;
 #[derive(FromRow)]
 pub struct Video {
     pub processing: bool,
+    pub processing_error: Option<String>,
+    pub thumbnail: Option<Vec<u8>>,
     pub mp4_480p: Option<Vec<u8>>,
-    pub mp4_720p: Option<Vec<u8>>,
 }
 
 #[derive(Default)]
 pub struct VideoUpdateQuery {
     pub processing: Option<bool>,
+    pub processing_error: Option<String>,
+    pub thumbnail: Option<Vec<u8>>,
     pub mp4_480p: Option<Vec<u8>>,
-    pub mp4_720p: Option<Vec<u8>>,
 }
 
 impl Video {
     pub async fn insert(db: &Pool<Sqlite>, user_id: i64) -> Result<i64, sqlx::Error> {
         Ok(
-            sqlx::query("INSERT INTO videos (id, user_id, processing, mp4_480p, mp4_720p) VALUES (NULL, $1, 1, NULL, NULL)")
+            sqlx::query("INSERT INTO videos (id, user_id, processing, processing_error, thumbnail, mp4_480p) VALUES (NULL, $1, 1, NULL, NULL, NULL)")
                 .bind(user_id)
                 .execute(db)
                 .await?
@@ -31,6 +33,13 @@ impl Video {
         sqlx::query_as("SELECT * FROM videos WHERE id = ?")
             .bind(id)
             .fetch_one(db)
+            .await
+    }
+
+    pub async fn delete(db: &Pool<Sqlite>, id: i64) -> Result<SqliteQueryResult, sqlx::Error> {
+        sqlx::query("DELETE FROM videos WHERE id = ?")
+            .bind(id)
+            .execute(db)
             .await
     }
 
@@ -52,15 +61,21 @@ impl Video {
                 };
             };
             cond!(query.processing.is_some(), append, "processing = $2");
-            cond!(query.mp4_480p.is_some(), append, "mp4_480p = $3");
-            cond!(query.mp4_720p.is_some(), append, "mp4_720p = $4");
+            cond!(query.thumbnail.is_some(), append, "thumbnail = $3");
+            cond!(query.mp4_480p.is_some(), append, "mp4_480p = $4");
+            cond!(
+                query.processing_error.is_some(),
+                append,
+                "processing_error = $5"
+            );
             clause
         });
         sqlx::query(&sql)
             .bind(id)
             .bind(query.processing)
+            .bind(query.thumbnail)
             .bind(query.mp4_480p)
-            .bind(query.mp4_720p)
+            .bind(query.processing_error)
             .execute(db)
             .await
     }

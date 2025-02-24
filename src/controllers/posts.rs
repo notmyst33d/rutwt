@@ -4,7 +4,7 @@ use crate::{
         CANNOT_DELETE_POST, CANNOT_FIND_POST, CANNOT_INSERT_POST, CANNOT_USE_THIS_MEDIA_TYPE,
         MEDIA_NOT_FOUND, POST_IS_ALREADY_LIKED, POST_IS_NOT_LIKED,
     },
-    models::Post,
+    models::{Post, post::PostFindQuery},
 };
 use axum::{
     Json, Router,
@@ -31,7 +31,15 @@ struct PostRequest {
 pub struct PostMedia {
     pub photo: Option<String>,
     pub video: Option<String>,
-    pub audio: Option<String>,
+    pub audio: Option<PostMediaAudio>,
+}
+
+#[derive(serde::Serialize)]
+pub struct PostMediaAudio {
+    pub id: String,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub thumbnail: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -64,19 +72,8 @@ pub struct FindQuery {
     pub username: Option<String>,
     pub offset: Option<i64>,
     pub count: Option<i64>,
-}
-
-#[derive(serde::Deserialize)]
-pub struct CommentsQuery {
-    pub id: i64,
-    pub offset: Option<i64>,
-    pub count: Option<i64>,
-}
-
-#[derive(serde::Deserialize)]
-pub struct FeedQuery {
-    pub offset: Option<i64>,
-    pub count: Option<i64>,
+    pub comments: Option<bool>,
+    pub feed: Option<bool>,
 }
 
 #[derive(serde::Deserialize)]
@@ -117,73 +114,26 @@ async fn posts_find(
     State(state): State<Arc<SharedState>>,
     Query(query): Query<FindQuery>,
 ) -> axum::response::Result<impl IntoResponse> {
-    let posts = Post::find(
-        &state.db,
-        query.offset.unwrap_or(0),
-        query.count.unwrap_or(100),
-        query.id,
-        query.username.as_deref(),
-        None,
-        false,
-        false,
-        claims.user_id,
-    )
-    .await
-    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_FIND_POST))?;
+    if query.id.is_none() && query.comments.unwrap_or_default() {
+        return Err((StatusCode::BAD_REQUEST, "cannot fetch comments without id").into());
+    }
 
-    Ok(Json(
-        posts
-            .into_iter()
-            .map(|p| p.into_response())
-            .collect::<Vec<_>>(),
-    ))
-}
+    if query.feed.unwrap_or_default() && (query.id.is_some() || query.username.is_some()) {
+        return Err((StatusCode::BAD_REQUEST, "cannot filter feed").into());
+    }
 
-async fn posts_comments(
-    claims: Claims,
-    State(state): State<Arc<SharedState>>,
-    Query(query): Query<CommentsQuery>,
-) -> axum::response::Result<impl IntoResponse> {
-    let posts = Post::find(
-        &state.db,
-        query.offset.unwrap_or(0),
-        query.count.unwrap_or(100),
-        Some(query.id),
-        None,
-        None,
-        false,
-        true,
-        claims.user_id,
-    )
-    .await
-    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_FIND_POST))?;
+    let mut post_query = PostFindQuery::default();
+    post_query.id = query.id;
+    post_query.offset = query.offset.unwrap_or(0);
+    post_query.count = query.count.unwrap_or(100).clamp(0, 100);
+    post_query.username = query.username;
+    post_query.comments = query.comments.unwrap_or_default();
+    post_query.feed = query.feed.unwrap_or_default();
+    post_query.self_user_id = claims.user_id;
 
-    Ok(Json(
-        posts
-            .into_iter()
-            .map(|p| p.into_response())
-            .collect::<Vec<_>>(),
-    ))
-}
-
-async fn posts_feed(
-    claims: Claims,
-    State(state): State<Arc<SharedState>>,
-    Query(query): Query<FeedQuery>,
-) -> axum::response::Result<impl IntoResponse> {
-    let posts = Post::find(
-        &state.db,
-        query.offset.unwrap_or(0),
-        query.count.unwrap_or(100),
-        None,
-        None,
-        Some(claims.user_id),
-        true,
-        false,
-        claims.user_id,
-    )
-    .await
-    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_FIND_POST))?;
+    let posts = Post::find(&state.db, post_query)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(
         posts
@@ -198,26 +148,26 @@ async fn posts_create(
     State(state): State<Arc<SharedState>>,
     Json(request): Json<PostRequest>,
 ) -> axum::response::Result<impl IntoResponse> {
-    if request.media.len() > 5
-        || request
-            .message
-            .as_ref()
-            .and_then(|v| Some(v.len() > 2048))
-            .unwrap_or(false)
-    {
-        return Err((StatusCode::BAD_REQUEST, "uh oh").into());
+    if request.media.len() > 5 {
+        return Err((StatusCode::BAD_REQUEST, "too much media").into());
     }
 
-    if (request.message.is_none()
-        || request
-            .message
-            .as_deref()
-            .and_then(|m| Some(m == ""))
-            .unwrap_or_default())
-        && request.media.len() == 0
-    {
-        return Err((StatusCode::BAD_REQUEST, "uh oh").into());
-    }
+    let filtered_message = if let Some(message) = request.message {
+        let filtered_message = message.trim().to_string();
+        if filtered_message.len() > 2048 {
+            return Err((StatusCode::BAD_REQUEST, "message too long").into());
+        }
+
+        if filtered_message.is_empty() && request.media.len() == 0 {
+            return Err((StatusCode::BAD_REQUEST, "message empty").into());
+        }
+        Some(filtered_message)
+    } else {
+        if request.media.len() == 0 {
+            return Err((StatusCode::BAD_REQUEST, "message empty").into());
+        }
+        None
+    };
 
     if let Some(comment_post_id) = request.comment_post_id {
         if !Post::exists(&state.db, comment_post_id).await {
@@ -228,7 +178,7 @@ async fn posts_create(
     let id = Post::insert(
         &state.db,
         claims.user_id,
-        request.message.as_deref(),
+        filtered_message.as_deref(),
         request.comment_post_id.is_some(),
     )
     .await
@@ -248,7 +198,7 @@ async fn posts_create(
                     .into());
             }
         }
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, MEDIA_NOT_FOUND))?;
+        .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
     }
 
     if let Some(comment_post_id) = request.comment_post_id {
@@ -266,8 +216,6 @@ pub fn routes() -> Router<Arc<SharedState>> {
         .route("/like", get(posts_like))
         .route("/unlike", get(posts_unlike))
         .route("/find", get(posts_find))
-        .route("/comments", get(posts_comments))
-        .route("/feed", get(posts_feed))
 }
 
 #[cfg(test)]
@@ -282,11 +230,16 @@ mod tests {
     #[tokio::test]
     async fn post() {
         let (state, token) = init().await;
-        let response = send_post(state.clone(), "/api/posts/create", Some(&token), &PostRequest {
-            message: Some("test".to_string()),
-            media: vec![],
-            comment_post_id: None,
-        })
+        let response = send_post(
+            state.clone(),
+            "/api/posts/create",
+            Some(&token),
+            &PostRequest {
+                message: Some("test".to_string()),
+                media: vec![],
+                comment_post_id: None,
+            },
+        )
         .await;
         assert!(response.status() == StatusCode::OK);
     }

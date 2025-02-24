@@ -120,11 +120,16 @@ mod tests {
     #[tokio::test]
     async fn register_and_login() {
         let (state, _) = init().await;
-        let response = send_post(state.clone(), "/api/auth/register", None, &RegisterRequest {
-            realname: "test2".to_string(),
-            username: "test2".to_string(),
-            password: "test2".to_string(),
-        })
+        let response = send_post(
+            state.clone(),
+            "/api/auth/register",
+            None,
+            &RegisterRequest {
+                realname: "test2".to_string(),
+                username: "test2".to_string(),
+                password: "test2".to_string(),
+            },
+        )
         .await;
         assert!(response.status() == StatusCode::OK);
 

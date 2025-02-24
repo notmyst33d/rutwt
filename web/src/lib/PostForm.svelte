@@ -22,20 +22,40 @@
                 const filePicker = document.createElement("input");
                 filePicker.type = "file";
                 filePicker.multiple = true;
-                filePicker.addEventListener("change", (e) =>
+                filePicker.addEventListener("change", (e) => {
+                    for (const file of e.target.files) {
+                        if (media.length >= 5) {
+                            alert(
+                                "Можно иметь максимум 5 медиа файлов на посте.",
+                            );
+                            return;
+                        }
+                    }
                     upload({
                         event: e,
-                        onProcessingStart: (m) => media.push({ id: m.id, type: m.type, processing: true }),
+                        onProcessingStart: (m) =>
+                            media.push({
+                                id: m.id,
+                                type: m.type,
+                                processing: true,
+                            }),
                         onProcessingEnd: (m) => {
-                            for (let i = 0; i < media.length; i++) {
-                                if (media[i].id === m.id) {
-                                    media[i].processing = false;
-                                }
+                            if (m.error !== undefined && m.error !== null) {
+                                alert("Произошла ошибка при обработке файла");
+                                media = media.filter((mf) => mf.id !== m.id);
+                                return;
                             }
+                            media = media.map((mf) => {
+                                if (mf.id === m.id) {
+                                    mf.processing = false;
+                                }
+                                return mf;
+                            });
                         },
-                    }),
-                );
-                filePicker.accept = "image/jpeg,audio/mpeg,video/mp4";
+                    });
+                });
+                filePicker.accept =
+                    "image/jpeg,image/png,image/webp,audio/mpeg,audio/mp4,audio/ogg,video/mp4,video/webm,video/x-matroska";
                 filePicker.click();
             }}
             ><svg
@@ -53,10 +73,6 @@
         <button
             class="button modal-button"
             onclick={async () => {
-                if (media.length > 5) {
-                    alert("Слишком много файлов, максимальное количество 5");
-                    return;
-                }
                 const mediaIds = [];
                 for (const mediaEntry of media) {
                     if (mediaEntry.processing) return;
@@ -77,13 +93,17 @@
                         Authorization: `Bearer ${window.localStorage.getItem("token")}`,
                     },
                 });
-                const data = await response.json();
-                if (commentPostId !== undefined) {
-                    invalidate("data:comments");
-                    message = "";
-                    media = [];
+                if (response.status !== 200) {
+                    alert("Произошла ошибка при создании поста");
                 } else {
-                    goto(`/${page.data.user.username}/status/${data.id}`);
+                    const data = await response.json();
+                    if (commentPostId !== undefined) {
+                        invalidate("data:comments");
+                        message = "";
+                        media = [];
+                    } else {
+                        goto(`/${page.data.user.username}/status/${data.id}`);
+                    }
                 }
             }}
             ><svg
@@ -100,14 +120,32 @@
     </div>
     <div class="row post-form-media">
         {#each media as mediaEntry}
-            {#if mediaEntry.processing}
-                <div class="post-form-media-container">
+            <div class="post-form-media-container">
+                {#if mediaEntry.processing}
                     <div class="loader"></div>
-                </div>
-            {:else if mediaEntry.type === "photo"}
-                <!-- svelte-ignore a11y_missing_attribute -->
-                <div class="post-form-media-container">
-                    <img src="/api/media/{mediaEntry.id}.jpg:small" />
+                {:else if mediaEntry.type === "photo" || mediaEntry.type === "video"}
+                    <!-- svelte-ignore a11y_missing_attribute -->
+                    <img
+                        src="/api/media/{mediaEntry.id}.jpg:{mediaEntry.type ==
+                        'photo'
+                            ? 'small'
+                            : 'thumbnail'}"
+                    />
+                {:else if mediaEntry.type === "audio"}
+                    <div class="music-note">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            height="32px"
+                            viewBox="0 -960 960 960"
+                            width="32px"
+                            fill="currentColor"
+                            ><path
+                                d="M400-120q-66 0-113-47t-47-113q0-66 47-113t113-47q23 0 42.5 5.5T480-418v-382q0-17 11.5-28.5T520-840h160q17 0 28.5 11.5T720-800v80q0 17-11.5 28.5T680-680H560v400q0 66-47 113t-113 47Z"
+                            /></svg
+                        >
+                    </div>
+                {/if}
+                {#if !mediaEntry.processing}
                     <!-- svelte-ignore a11y_consider_explicit_label -->
                     <button
                         class="button post-form-remove-button"
@@ -127,13 +165,18 @@
                             />
                         </svg>
                     </button>
-                </div>
-            {/if}
+                {/if}
+            </div>
         {/each}
     </div>
 </div>
 
 <style>
+    .music-note {
+        margin-left: 16px;
+        margin-top: 16px;
+    }
+
     .loader {
         width: 6px;
         margin: auto;

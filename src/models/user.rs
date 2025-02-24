@@ -22,6 +22,7 @@ pub struct User {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct UserUpdateQuery {
     pub username: Option<String>,
     pub realname: Option<String>,
@@ -39,7 +40,7 @@ impl User {
         hashed_password: &str,
     ) -> Result<i64, sqlx::Error> {
         Ok(
-            sqlx::query("INSERT INTO users (id, username, realname, hashed_password, profile_picture_photo_id, banner_photo_id, bio) VALUES (NULL, $1, $2, $3, NULL, NULL, NULL)")
+            sqlx::query("INSERT INTO users (id, username, realname, hashed_password, profile_picture_photo_id, banner_photo_id, bio, deleted) VALUES (NULL, $1, $2, $3, NULL, NULL, NULL, 0)")
                 .bind(username)
                 .bind(realname)
                 .bind(hashed_password)
@@ -62,16 +63,25 @@ impl User {
             (SELECT COUNT(*) FROM follows WHERE sub_user_id = id) AS followers,
             (SELECT COUNT(*) FROM follows WHERE user_id = $3 AND sub_user_id = id) AS following
         FROM users
-        {} {}
+        {}
         ",
-            if id.is_some() { "WHERE id = $1" } else { "" },
-            if id.is_some() && username.is_some() {
-                "AND username = $2"
-            } else if username.is_some() {
-                "WHERE username = $2"
-            } else {
-                ""
-            },
+            {
+                let mut first = true;
+                let mut clause = String::new();
+                let mut append = |cond| {
+                    clause += if first {
+                        first = false;
+                        " WHERE "
+                    } else {
+                        " AND "
+                    };
+                    clause += cond;
+                };
+                cond!(id.is_some(), append, "id = $1");
+                cond!(username.is_some(), append, "username = $2");
+                append("deleted = 0");
+                clause
+            }
         );
         sqlx::query_as(&sql)
             .bind(id)

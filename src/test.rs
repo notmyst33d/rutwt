@@ -43,16 +43,21 @@ pub mod instrumentation {
             db: SqlitePool::connect(":memory:").await.unwrap(),
         });
 
-        sqlx::query(include_str!("../data/schema.sql"))
+        sqlx::query(include_str!("../data/0000-base-schema.sql"))
             .execute(&state.db)
             .await
             .unwrap();
 
-        let response = send_post(state.clone(), "/api/auth/register", None, &RegisterRequest {
-            realname: "test".to_string(),
-            username: "test".to_string(),
-            password: "test".to_string(),
-        })
+        let response = send_post(
+            state.clone(),
+            "/api/auth/register",
+            None,
+            &RegisterRequest {
+                realname: "test".to_string(),
+                username: "test".to_string(),
+                password: "test".to_string(),
+            },
+        )
         .await;
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let data: UserMixedAuthResponse = serde_json::from_slice(&bytes).unwrap();

@@ -1,13 +1,14 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
     extract::{Multipart, Path, State},
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{get, head, post},
 };
 use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
+use tokio::time::sleep;
 
 use crate::{
     Claims, SharedState,
@@ -36,6 +37,7 @@ pub enum MediaType {
 struct MediaResponse {
     pub id: String,
     pub processing: bool,
+    pub processing_error: Option<String>,
 }
 
 pub fn encode_media_id(media_type: MediaType, id: i64) -> String {
@@ -83,7 +85,42 @@ pub fn parse_media_id(id: &str) -> Result<(MediaType, i64), (StatusCode, &'stati
     }
 }
 
+async fn media_handler_head() -> impl IntoResponse {
+    [(header::ACCEPT_RANGES, "bytes")]
+}
+
+#[derive(serde::Serialize)]
+struct MediaMetadata {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub thumbnail: bool,
+}
+
+async fn media_metadata(
+    State(state): State<Arc<SharedState>>,
+    Path(id): Path<String>,
+) -> axum::response::Result<impl IntoResponse> {
+    let (media_type, num_id) = parse_media_id(&id)?;
+    if media_type != MediaType::Audio {
+        return Err((StatusCode::BAD_REQUEST, CANNOT_USE_THIS_MEDIA_TYPE).into());
+    }
+
+    let audio = Audio::find(&state.db, num_id)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
+
+    Ok((
+        StatusCode::OK,
+        Json(MediaMetadata {
+            title: audio.title,
+            artist: audio.artist,
+            thumbnail: audio.thumbnail.is_some(),
+        }),
+    ))
+}
+
 async fn media_handler(
+    request_headers: HeaderMap,
     State(state): State<Arc<SharedState>>,
     Path(id): Path<String>,
 ) -> axum::response::Result<impl IntoResponse> {
@@ -98,85 +135,171 @@ async fn media_handler(
         return Err((StatusCode::BAD_REQUEST, CANNOT_USE_THIS_MEDIA_TYPE).into());
     }
 
+    let default_res = match media_type {
+        MediaType::Audio => "128k",
+        MediaType::Photo | MediaType::Banner => "medium",
+        MediaType::ProfilePicture => "small",
+        MediaType::Video => "480p",
+    };
+    let (_, preferred_res) = ext.split_once(":").unwrap_or((ext, default_res));
+
     let (media, filename) = match &ext[..3] {
         "jpg" => {
             headers.insert(header::CONTENT_TYPE, "image/jpeg".parse().unwrap());
-            let default_res = if media_type == MediaType::ProfilePicture {
-                "small"
-            } else {
-                "medium"
-            };
-            let (_, res) = ext.split_once(":").unwrap_or((ext, default_res));
-            let photo = Photo::find(&state.db, num_id)
-                .await
-                .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
-            if photo.processing {
-                return Err((StatusCode::NO_CONTENT, MEDIA_IS_PROCESSING).into());
-            }
-            if (photo.profile_picture && media_type == MediaType::Photo)
-                || (!photo.profile_picture && media_type == MediaType::ProfilePicture)
-            {
-                return Err((StatusCode::BAD_REQUEST, CANNOT_USE_THIS_MEDIA_TYPE).into());
-            }
-            if (photo.banner && media_type == MediaType::Photo)
-                || (!photo.profile_picture && media_type == MediaType::ProfilePicture)
-            {
-                return Err((StatusCode::BAD_REQUEST, CANNOT_USE_THIS_MEDIA_TYPE).into());
-            }
-            let (media, actual_res) = match res {
-                "small" => (photo.jpg_small, "small"),
-                "medium" => (photo.jpg_medium, "medium"),
-                "large" => (photo.jpg_large, "large"),
-                "orig" => (photo.jpg_orig, "orig"),
-                _ => {
-                    if media_type == MediaType::ProfilePicture {
-                        (photo.jpg_small, default_res)
-                    } else {
-                        (photo.jpg_medium, default_res)
+            let (media, actual_res) = match media_type {
+                MediaType::Audio => {
+                    let audio = Audio::find(&state.db, num_id)
+                        .await
+                        .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
+                    if audio.processing || audio.thumbnail == None {
+                        return Err((StatusCode::NO_CONTENT, MEDIA_IS_PROCESSING).into());
                     }
+                    (audio.thumbnail, "thumbnail")
+                }
+                MediaType::Video => {
+                    let video = Video::find(&state.db, num_id)
+                        .await
+                        .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
+                    if video.thumbnail == None {
+                        return Err((StatusCode::NOT_FOUND, MEDIA_NOT_FOUND).into());
+                    }
+                    if video.processing {
+                        return Err((StatusCode::NO_CONTENT, MEDIA_IS_PROCESSING).into());
+                    }
+                    (video.thumbnail, "thumbnail")
+                }
+                MediaType::Photo | MediaType::Banner | MediaType::ProfilePicture => {
+                    let photo = Photo::find(&state.db, num_id)
+                        .await
+                        .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
+                    if photo.processing {
+                        return Err((StatusCode::NO_CONTENT, MEDIA_IS_PROCESSING).into());
+                    }
+                    if (!photo.profile_picture && media_type == MediaType::ProfilePicture)
+                        || (photo.profile_picture && media_type == MediaType::Photo)
+                        || (photo.profile_picture && media_type == MediaType::Banner)
+                        || (!photo.banner && media_type == MediaType::Banner)
+                        || (photo.banner && media_type == MediaType::Photo)
+                        || (photo.banner && media_type == MediaType::ProfilePicture)
+                    {
+                        return Err((StatusCode::BAD_REQUEST, CANNOT_USE_THIS_MEDIA_TYPE).into());
+                    }
+                    let formats = [
+                        (photo.jpg_large, "large"),
+                        (photo.jpg_medium, "medium"),
+                        (photo.jpg_small, "small"),
+                    ];
+                    let mut best_format = formats
+                        .clone()
+                        .into_iter()
+                        .find(|f| f.0.is_some() && f.1 == preferred_res);
+                    if best_format.is_none() {
+                        best_format = formats.into_iter().find(|f| f.0.is_some());
+                    }
+                    if best_format.is_none() {
+                        return Err((StatusCode::NO_CONTENT, MEDIA_IS_PROCESSING).into());
+                    }
+                    best_format.unwrap()
                 }
             };
             (media.unwrap(), format!("{id}_{actual_res}.jpg"))
         }
         "mp4" => {
+            if media_type != MediaType::Video {
+                return Err((StatusCode::BAD_REQUEST, CANNOT_USE_THIS_MEDIA_TYPE).into());
+            }
             headers.insert(header::CONTENT_TYPE, "video/mp4".parse().unwrap());
-            let (_, res) = ext.split_once(":").unwrap_or((ext, "480p"));
             let video = Video::find(&state.db, num_id)
                 .await
                 .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
             if video.processing {
                 return Err((StatusCode::NO_CONTENT, MEDIA_IS_PROCESSING).into());
             }
-            let (media, actual_res) = match res {
-                "720p" => (video.mp4_720p, "720p"),
-                _ => (video.mp4_480p, "480p"),
-            };
-            (media.unwrap(), format!("{id}_{actual_res}.mp4"))
+            let formats = [(video.mp4_480p, "480p")];
+            let mut best_format = formats
+                .clone()
+                .into_iter()
+                .find(|f| f.0.is_some() && f.1 == preferred_res);
+            if best_format.is_none() {
+                best_format = formats.into_iter().find(|f| f.0.is_some());
+            }
+            if best_format.is_none() {
+                return Err((StatusCode::NO_CONTENT, MEDIA_IS_PROCESSING).into());
+            }
+            let (media, actual_res) = best_format.unwrap();
+            (media.unwrap(), format!("{id}_{actual_res}.jpg"))
         }
         "mp3" => {
+            if media_type != MediaType::Audio {
+                return Err((StatusCode::BAD_REQUEST, CANNOT_USE_THIS_MEDIA_TYPE).into());
+            }
             headers.insert(header::CONTENT_TYPE, "audio/mpeg".parse().unwrap());
-            let (_, res) = ext.split_once(":").unwrap_or((ext, "128k"));
             let audio = Audio::find(&state.db, num_id)
                 .await
                 .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
             if audio.processing {
                 return Err((StatusCode::NO_CONTENT, MEDIA_IS_PROCESSING).into());
             }
-            let (media, actual_res) = match res {
-                "320k" => (audio.mp3_320k, "320k"),
-                _ => (audio.mp3_128k, "128k"),
-            };
+            let formats = [(audio.mp3_128k, "128k")];
+            let mut best_format = formats
+                .clone()
+                .into_iter()
+                .find(|f| f.0.is_some() && f.1 == preferred_res);
+            if best_format.is_none() {
+                best_format = formats.into_iter().find(|f| f.0.is_some());
+            }
+            if best_format.is_none() {
+                return Err((StatusCode::NO_CONTENT, MEDIA_IS_PROCESSING).into());
+            }
+            let (media, actual_res) = best_format.unwrap();
             (media.unwrap(), format!("{id}_{actual_res}.mp3"))
         }
         _ => return Err((StatusCode::BAD_REQUEST, CANNOT_USE_THIS_MEDIA_TYPE).into()),
     };
 
+    headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
     headers.insert(
         header::CONTENT_DISPOSITION,
         format!("inline; filename=\"{filename}\"").parse().unwrap(),
     );
 
-    Ok((headers, media))
+    if let Some(range) = request_headers.get("Range") {
+        let range = range.to_str().unwrap();
+        if range.contains(",") {
+            return Ok((StatusCode::OK, headers, media));
+        }
+        let Some((from, to)) = range[6..].split_once("-") else {
+            return Ok((StatusCode::OK, headers, media));
+        };
+        let start = match from.parse::<usize>() {
+            Ok(v) => v,
+            Err(_) => 0,
+        };
+        let end = match to.parse::<usize>() {
+            Ok(v) => v + 1,
+            Err(_) => media.len(),
+        };
+        if start > media.len() || end > media.len() {
+            return Err((StatusCode::RANGE_NOT_SATISFIABLE, headers, "").into());
+        }
+        if start == 0 && end == media.len() {
+            return Ok((StatusCode::OK, headers, media));
+        } else {
+            headers.insert(
+                header::CONTENT_RANGE,
+                format!("bytes {start}-{}/{}", end - 1, media.len())
+                    .parse()
+                    .unwrap(),
+            );
+            return Ok((
+                StatusCode::PARTIAL_CONTENT,
+                headers,
+                media[start..end].to_vec(),
+            ));
+        }
+    }
+
+    Ok((StatusCode::OK, headers, media))
 }
 
 async fn media_upload(
@@ -189,7 +312,10 @@ async fn media_upload(
 
     while let Some(field) = multipart.next_field().await? {
         let name = field.name().unwrap().to_string();
-        let data = field.bytes().await.unwrap();
+        let data = field
+            .bytes()
+            .await
+            .map_err(|_| (StatusCode::BAD_REQUEST, "cannot read body"))?;
 
         match name.as_str() {
             "type" => media_type = Some(String::from_utf8(data.to_vec()).unwrap()),
@@ -207,28 +333,54 @@ async fn media_upload(
     };
 
     let id = match media_type.as_str() {
-        "photo" => {
+        "photo" | "profile_picture" | "banner" => {
             let id = Photo::insert(&state.db, claims.user_id).await.unwrap();
+            let media_type_id = match media_type.as_str() {
+                "profile_picture" => MediaType::ProfilePicture,
+                "banner" => MediaType::Banner,
+                _ => MediaType::Photo,
+            };
             tokio::spawn(async move {
-                let result = media::process_photo(media_data).await.unwrap();
                 let mut query = PhotoUpdateQuery::default();
+                let result = match media::process_photo(media_data).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        query.processing = Some(false);
+                        query.processing_error = Some(e.error);
+                        Photo::update(&state.db, id, query).await.unwrap();
+                        sleep(Duration::from_secs(10)).await;
+                        Photo::delete(&state.db, id).await.unwrap();
+                        return;
+                    }
+                };
                 query.processing = Some(false);
                 query.jpg_small = Some(result.jpg_small);
-                query.jpg_medium = Some(result.jpg_medium);
-                query.jpg_large = Some(result.jpg_large);
-                query.jpg_orig = Some(result.jpg_orig);
+                query.jpg_medium = result.jpg_medium;
+                query.jpg_large = result.jpg_large;
+                query.profile_picture = Some(media_type == "profile_picture");
+                query.banner = Some(media_type == "banner");
                 Photo::update(&state.db, id, query).await.unwrap();
             });
-            encode_media_id(MediaType::Photo, id)
+            encode_media_id(media_type_id, id)
         }
         "video" => {
             let id = Video::insert(&state.db, claims.user_id).await.unwrap();
             tokio::spawn(async move {
-                let result = media::process_video(media_data).await.unwrap();
                 let mut query = VideoUpdateQuery::default();
+                let result = match media::process_video(media_data).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        query.processing = Some(false);
+                        query.processing_error = Some(e.error);
+                        Video::update(&state.db, id, query).await.unwrap();
+                        sleep(Duration::from_secs(10)).await;
+                        Video::delete(&state.db, id).await.unwrap();
+                        return;
+                    }
+                };
                 query.processing = Some(false);
+                query.thumbnail = Some(result.thumbnail);
                 query.mp4_480p = Some(result.mp4_480p);
-                query.mp4_720p = Some(result.mp4_720p);
                 Video::update(&state.db, id, query).await.unwrap();
             });
             encode_media_id(MediaType::Video, id)
@@ -236,44 +388,38 @@ async fn media_upload(
         "audio" => {
             let id = Audio::insert(&state.db, claims.user_id).await.unwrap();
             tokio::spawn(async move {
-                let result = media::process_audio(media_data).await.unwrap();
                 let mut query = AudioUpdateQuery::default();
+                let result = match media::process_audio(media_data).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        query.processing = Some(false);
+                        query.processing_error = Some(e.error);
+                        Audio::update(&state.db, id, query).await.unwrap();
+                        sleep(Duration::from_secs(10)).await;
+                        Audio::delete(&state.db, id).await.unwrap();
+                        return;
+                    }
+                };
                 query.processing = Some(false);
+                query.title = result.title.and_then(|t| {
+                    Some(if t.len() > 100 {
+                        t[..100].to_string()
+                    } else {
+                        t
+                    })
+                });
+                query.artist = result.artist.and_then(|a| {
+                    Some(if a.len() > 100 {
+                        a[..100].to_string()
+                    } else {
+                        a
+                    })
+                });
+                query.thumbnail = result.thumbnail;
                 query.mp3_128k = Some(result.mp3_128k);
-                query.mp3_320k = Some(result.mp3_320k);
                 Audio::update(&state.db, id, query).await.unwrap();
             });
             encode_media_id(MediaType::Audio, id)
-        }
-        "profile_picture" => {
-            let id = Photo::insert(&state.db, claims.user_id).await.unwrap();
-            tokio::spawn(async move {
-                let result = media::process_photo(media_data).await.unwrap();
-                let mut query = PhotoUpdateQuery::default();
-                query.jpg_small = Some(result.jpg_small);
-                query.jpg_medium = Some(result.jpg_medium);
-                query.jpg_large = Some(result.jpg_large);
-                query.jpg_orig = Some(result.jpg_orig);
-                query.processing = Some(false);
-                query.profile_picture = Some(true);
-                Photo::update(&state.db, id, query).await.unwrap();
-            });
-            encode_media_id(MediaType::ProfilePicture, id)
-        }
-        "banner" => {
-            let id = Photo::insert(&state.db, claims.user_id).await.unwrap();
-            tokio::spawn(async move {
-                let result = media::process_photo(media_data).await.unwrap();
-                let mut query = PhotoUpdateQuery::default();
-                query.jpg_small = Some(result.jpg_small);
-                query.jpg_medium = Some(result.jpg_medium);
-                query.jpg_large = Some(result.jpg_large);
-                query.jpg_orig = Some(result.jpg_orig);
-                query.processing = Some(false);
-                query.banner = Some(true);
-                Photo::update(&state.db, id, query).await.unwrap();
-            });
-            encode_media_id(MediaType::Banner, id)
         }
         _ => return Err((StatusCode::BAD_REQUEST, "cannot find media type").into()),
     };
@@ -281,6 +427,7 @@ async fn media_upload(
     Ok(Json(MediaResponse {
         id,
         processing: true,
+        processing_error: None,
     }))
 }
 
@@ -290,13 +437,14 @@ async fn media_check(
 ) -> axum::response::Result<impl IntoResponse> {
     let (media_type, num_id) = parse_media_id(&id)?;
     Ok(Json(match media_type {
-        MediaType::Photo => {
+        MediaType::Photo | MediaType::Banner | MediaType::ProfilePicture => {
             let photo = Photo::find(&state.db, num_id)
                 .await
                 .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
             MediaResponse {
                 id,
                 processing: photo.processing,
+                processing_error: photo.processing_error,
             }
         }
         MediaType::Video => {
@@ -306,6 +454,7 @@ async fn media_check(
             MediaResponse {
                 id,
                 processing: video.processing,
+                processing_error: video.processing_error,
             }
         }
         MediaType::Audio => {
@@ -315,30 +464,7 @@ async fn media_check(
             MediaResponse {
                 id,
                 processing: audio.processing,
-            }
-        }
-        MediaType::ProfilePicture => {
-            let photo = Photo::find(&state.db, num_id)
-                .await
-                .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
-            if !photo.profile_picture {
-                return Err((StatusCode::BAD_REQUEST, CANNOT_USE_THIS_MEDIA_TYPE).into());
-            }
-            MediaResponse {
-                id,
-                processing: photo.processing,
-            }
-        }
-        MediaType::Banner => {
-            let photo = Photo::find(&state.db, num_id)
-                .await
-                .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
-            if !photo.banner {
-                return Err((StatusCode::BAD_REQUEST, CANNOT_USE_THIS_MEDIA_TYPE).into());
-            }
-            MediaResponse {
-                id,
-                processing: photo.processing,
+                processing_error: audio.processing_error,
             }
         }
     }))
@@ -348,5 +474,7 @@ pub fn routes() -> Router<Arc<SharedState>> {
     Router::new()
         .route("/upload", post(media_upload))
         .route("/check/{id}", get(media_check))
+        .route("/metadata/{id}", get(media_metadata))
         .route("/{id}", get(media_handler))
+        .route("/{id}", head(media_handler_head))
 }

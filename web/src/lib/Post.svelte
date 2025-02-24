@@ -21,11 +21,67 @@
         </div>
     </div>
     <span class="text">{post.message}</span>
-    <div class="media">
+    <div class="column media">
         {#each post.media as media}
             {#if media.photo !== null}
                 <!-- svelte-ignore a11y_missing_attribute -->
                 <img loading="lazy" src="/api/media/{media.photo}.jpg" />
+            {/if}
+            {#if media.video !== null}
+                <!-- svelte-ignore a11y_media_has_caption -->
+                <video
+                    preload="none"
+                    poster="/api/media/{media.video}.jpg"
+                    src="/api/media/{media.video}.mp4"
+                    controls
+                ></video>
+            {/if}
+            {#if media.audio !== null}
+                <!-- svelte-ignore a11y_media_has_caption -->
+                <div class="row outlined">
+                    <!-- svelte-ignore a11y_missing_attribute -->
+                    {#if media.audio.thumbnail}
+                        <img
+                            src="/api/media/{media.audio.id}.jpg"
+                            class="post-form-media-container no-shrink margin-right-8"
+                        />
+                    {:else}
+                        <div class="post-form-media-container no-shrink margin-right-8">
+                            <div class="music-note">
+                                <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            height="32px"
+                            viewBox="0 -960 960 960"
+                            width="32px"
+                            fill="currentColor"
+                            ><path
+                                d="M400-120q-66 0-113-47t-47-113q0-66 47-113t113-47q23 0 42.5 5.5T480-418v-382q0-17 11.5-28.5T520-840h160q17 0 28.5 11.5T720-800v80q0 17-11.5 28.5T680-680H560v400q0 66-47 113t-113 47Z"
+                            /></svg
+                        >
+                            </div>
+                        </div>
+                    {/if}
+                    <div class="column grow fade">
+                        <span class="margin-bottom-8 fade">
+                            <span class="artist"
+                                >{media.audio.artist !== null
+                                    ? media.audio.artist
+                                    : "Неизвестный исполнитель"}</span
+                            >
+                            -
+                            <span class="title"
+                                >{media.audio.title !== null
+                                    ? media.audio.title
+                                    : "Без названия"}</span
+                            >
+                        </span>
+                        <audio
+                            preload="none"
+                            src="/api/media/{media.audio.id}.mp3"
+                            controls
+                        ></audio>
+                    </div>
+                </div>
             {/if}
         {/each}
     </div>
@@ -108,3 +164,39 @@
         </a>
     </div>
 </div>
+
+<style>
+    .title {
+        font-weight: 700;
+    }
+
+    .artist {
+        color: #aaaaaa;
+    }
+
+    .outlined {
+        border-color: #525252;
+        border-style: solid;
+        border-width: 1px;
+        border-radius: 8px;
+        padding: 12px;
+    }
+
+    .margin-right-8 {
+        margin-right: 8px;
+    }
+
+    .fade {
+        text-overflow: ellipsis;
+        text-wrap: nowrap;
+        overflow: hidden;
+    }
+
+    .music-note {
+        padding: 16px;
+    }
+
+    .no-shrink {
+        flex-shrink: 0;
+    }
+</style>

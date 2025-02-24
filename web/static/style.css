@@ -111,7 +111,7 @@ a:visited {
 }
 
 .post-form-media-container {
-    width: 64px;
+    width: 64px !important;
     height: 64px;
     border-style: solid;
     border-radius: 8px;
@@ -276,6 +276,10 @@ a:visited {
     display: block;
 }
 
+.media {
+    gap: 8px;
+}
+
 .media img {
     width: 100%;
     max-height: 600px;
@@ -284,6 +288,14 @@ a:visited {
 
 .media video {
     width: 100%;
+    max-height: 600px;
+    object-fit: contain;
+}
+
+.media audio {
+    width: 100%;
+    max-height: 600px;
+    object-fit: contain;
 }
 
 .username {

@@ -88,7 +88,7 @@ fn app(state: Arc<SharedState>) -> Router {
         .nest("/api/auth", controllers::auth::routes())
         .nest("/api/media", controllers::media::routes())
         .nest("/api/users", controllers::users::routes())
-        .layer(DefaultBodyLimit::disable())
+        .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
         .layer(CorsLayer::permissive())
         .with_state(state.clone())
 }
