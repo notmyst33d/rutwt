@@ -173,8 +173,7 @@
 
 <style>
     .music-note {
-        margin-left: 16px;
-        margin-top: 16px;
+        padding: 16px;
     }
 
     .loader {
