@@ -312,7 +312,14 @@ pub async fn process_audio(input: Vec<u8>) -> Result<AudioResult, MediaError> {
     }
 
     if probe_result.format.nb_streams == 2 {
-        let output = ffmpeg(&input_path, &output_thumbnail_path, &["-an", "-map", "0:1"]).await?;
+        let output = ffmpeg(&input_path, &output_thumbnail_path, &[
+            "-an",
+            "-map",
+            "0:1",
+            "-vf",
+            "scale=512:512",
+        ])
+        .await?;
         if !output.status.success() {
             return Err(MediaError::new(
                 "cannot process thumbnail audio".into(),
