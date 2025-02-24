@@ -48,6 +48,11 @@ pub mod instrumentation {
             .await
             .unwrap();
 
+        sqlx::query(include_str!("../data/0001-media-update.sql"))
+            .execute(&state.db)
+            .await
+            .unwrap();
+
         let response = send_post(
             state.clone(),
             "/api/auth/register",
