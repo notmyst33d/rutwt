@@ -157,7 +157,7 @@ pub async fn process_photo(input: Vec<u8>) -> Result<PhotoResult, MediaError> {
 
     let output = ffmpeg(&input_path, &output_small_path, &[
         "-vf",
-        "scale='min(256,iw)':'min(256,ih)':force_original_aspect_ratio=decrease",
+        "scale='min(512,iw)':'min(512,ih)':force_original_aspect_ratio=decrease",
     ])
     .await?;
     if !output.status.success() {
@@ -167,10 +167,10 @@ pub async fn process_photo(input: Vec<u8>) -> Result<PhotoResult, MediaError> {
         ));
     }
 
-    if stream.width.unwrap() >= 1024 || stream.height.unwrap() >= 1024 {
+    if stream.width.unwrap() > 768 || stream.height.unwrap() > 768 {
         let output = ffmpeg(&input_path, &output_medium_path, &[
             "-vf",
-            "scale='min(1024,iw)':'min(1024,ih)':force_original_aspect_ratio=decrease",
+            "scale='min(max(768,iw), 1024)':'min(max(768,ih), 1024)':force_original_aspect_ratio=decrease",
         ])
         .await?;
         if !output.status.success() {
@@ -181,7 +181,7 @@ pub async fn process_photo(input: Vec<u8>) -> Result<PhotoResult, MediaError> {
         }
     }
 
-    if stream.width.unwrap() >= 2048 || stream.height.unwrap() >= 2048 {
+    if stream.width.unwrap() > 2048 || stream.height.unwrap() > 2048 {
         let output = ffmpeg(&input_path, &output_large_path, &[
             "-vf",
             "scale='min(2048,iw)':'min(2048,ih)':force_original_aspect_ratio=decrease",
