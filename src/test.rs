@@ -60,7 +60,7 @@ pub mod instrumentation {
             &RegisterRequest {
                 realname: "test".to_string(),
                 username: "test".to_string(),
-                password: "test".to_string(),
+                password: "testtesttest".to_string(),
             },
         )
         .await;

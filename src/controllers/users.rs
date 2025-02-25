@@ -133,9 +133,14 @@ async fn users_settings(
         {
             return Err((StatusCode::BAD_REQUEST, "no").into());
         };
+        let self_user = User::find(&state.db, Some(claims.user_id), None, None)
+            .await
+            .map_err(|_| (StatusCode::NOT_FOUND, CANNOT_FIND_USER))?;
         if User::find(&state.db, None, Some(&username), None)
             .await
-            .is_ok()
+            .ok()
+            .map(|u| u.username != self_user.username)
+            .unwrap_or_default()
         {
             return Err((
                 StatusCode::BAD_REQUEST,

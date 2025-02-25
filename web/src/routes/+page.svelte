@@ -1,13 +1,21 @@
 <script>
     import { page } from "$app/state";
+    import InfiniteScroll from "$lib/InfiniteScroll.svelte";
     import Navbar from "$lib/Navbar.svelte";
     import Post from "$lib/Post.svelte";
+
+    let posts = $state(page.data.feed);
+    $effect(() => {
+        posts = page.data.feed;
+    });
+
+    let noMoreData = $state(false);
 </script>
 
 <div class="column">
     <Navbar />
     <span class="action align-self-center">Ваша лента</span>
-    {#if page.data.feed === undefined || page.data.feed.length === 0 }
+    {#if posts === undefined || posts.length === 0}
         <div id="feed-empty" class="column">
             <div class="text-center align-self-center">
                 Подпишитесь на пользователей Хъ чтобы ваша лента имела
@@ -20,9 +28,19 @@
         </div>
     {:else}
         <div id="posts-container" class="column feed-container">
-            {#each page.data.feed as post}
-                <Post {post} />
+            {#each posts as _, i}
+                <Post bind:post={posts[i]} />
             {/each}
+            {#if noMoreData}
+                <span class="action align-self-center"
+                    >Вы долистали до конца</span
+                >
+            {/if}
         </div>
     {/if}
+    <InfiniteScroll
+        bind:noMoreData
+        onLoad={(data) => (posts = posts.concat(data))}
+        additionalQueryParams="&feed=true"
+    />
 </div>

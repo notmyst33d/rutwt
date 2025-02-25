@@ -1,23 +1,34 @@
 <script>
     import { invalidate } from "$app/navigation";
     import { page } from "$app/state";
+    import InfiniteScroll from "$lib/InfiniteScroll.svelte";
     import Navbar from "$lib/Navbar.svelte";
     import Post from "$lib/Post.svelte";
+
+    let userPage = $derived.by(() => {
+        let userPage = $state(page.data.userPage);
+        return userPage;
+    });
+    let userPosts = $derived.by(() => {
+        let userPosts = $state(page.data.userPosts);
+        return userPosts;
+    });
+
+    let noMoreData = $state(false);
 </script>
 
 <div class="column">
     <Navbar />
-    {#if page.data.userPage === undefined}
+    {#if userPage === undefined}
         <span class="action align-self-center">Пользователь не найден</span>
     {:else}
         <div class="column feed-container">
             <div class="column profile margin-bottom-8">
-                {#if page.data.userPage.banner_photo_id !== null}
+                {#if userPage.banner_photo_id !== null}
                     <!-- svelte-ignore a11y_missing_attribute -->
                     <img
                         class="header"
-                        src="/api/media/{page.data.userPage
-                            .banner_photo_id}.jpg"
+                        src="/api/media/{userPage.banner_photo_id}.jpg"
                     />
                 {:else}
                     <div class="header gray-bg"></div>
@@ -26,62 +37,54 @@
                 <div class="row">
                     <img
                         class="big-profile-picture margin-top-8"
-                        src={page.data.userPage.profile_picture_photo_id !==
-                        null
-                            ? `/api/media/${page.data.userPage.profile_picture_photo_id}.jpg`
+                        src={userPage.profile_picture_photo_id !== null
+                            ? `/api/media/${userPage.profile_picture_photo_id}.jpg`
                             : "/placeholder/nopfp.png"}
                     />
                     <div class="column margin-left-8 margin-top-8">
                         <div class="row wrap gap align-items-center">
-                            <span class="big-realname"
-                                >{page.data.userPage.realname}</span
-                            >
-                            {#if page.data.userPage.followers === 1}
-                                <span class="subs hack">1 подписчик</span>
-                            {:else}
-                                <span class="subs hack"
-                                    >{page.data.userPage.followers} подписчиков</span
-                                >
-                            {/if}
+                            <span class="big-realname">
+                                {userPage.realname}
+                            </span>
+                            <span class="subs">
+                                {#if userPage.followers === 1}
+                                    {userPage.followers} подписчик
+                                {:else if userPage.followers > 1 && userPage.followers < 5}
+                                    {userPage.followers} подписчика
+                                {:else}
+                                    {userPage.followers} подписчиков
+                                {/if}
+                            </span>
                         </div>
-                        <span class="big-username"
-                            >@{page.data.userPage.username}</span
-                        >
+                        <span class="big-username">@{userPage.username}</span>
                         <div class="text margin-top-8">
-                            {page.data.userPage.bio}
+                            {userPage.bio}
                         </div>
                     </div>
                 </div>
-                {#if page.data.userPage.id != page.data.user.id}
+                {#if userPage.id != page.data.user.id}
                     <!-- svelte-ignore a11y_consider_explicit_label -->
                     <button
-                        class="button modal-button margin-top-8 {page.data
-                            .userPage.following
+                        class="button modal-button margin-top-8 {userPage.following
                             ? 'liked-button'
                             : ''}"
-                        onclick={async () => {
-                            if (page.data.userPage.following) {
-                                await fetch(
-                                    `/api/users/unfollow?id=${page.data.userPage.id}`,
-                                    {
-                                        headers: {
-                                            Authorization: `Bearer ${window.localStorage.getItem("token")}`,
-                                        },
+                        onclick={() => {
+                            if (userPage.following) {
+                                fetch(`/api/users/unfollow?id=${userPage.id}`, {
+                                    headers: {
+                                        Authorization: `Bearer ${window.localStorage.getItem("token")}`,
                                     },
-                                );
-                                page.data.userPage.following = false;
-                                page.data.userPage.followers -= 1;
+                                });
+                                userPage.following = false;
+                                userPage.followers -= 1;
                             } else {
-                                await fetch(
-                                    `/api/users/follow?id=${page.data.userPage.id}`,
-                                    {
-                                        headers: {
-                                            Authorization: `Bearer ${window.localStorage.getItem("token")}`,
-                                        },
+                                fetch(`/api/users/follow?id=${userPage.id}`, {
+                                    headers: {
+                                        Authorization: `Bearer ${window.localStorage.getItem("token")}`,
                                     },
-                                );
-                                page.data.userPage.following = true;
-                                page.data.userPage.followers += 1;
+                                });
+                                userPage.following = true;
+                                userPage.followers += 1;
                             }
                         }}
                     >
@@ -114,21 +117,31 @@
                     </a>
                 {/if}
             </div>
-            {#if page.data.user.username == page.params.slug && (page.data.userPosts === undefined || page.data.userPosts.length === 0)}
+            {#if page.data.user.username == page.params.slug && (userPosts === undefined || userPosts.length === 0)}
                 <span class="action align-self-center"
                     >У вас пока что нет постов</span
                 >
-            {:else if page.data.userPosts === undefined || page.data.userPosts.length === 0}
+            {:else if userPosts === undefined || userPosts.length === 0}
                 <span class="action align-self-center"
                     >У данного пользователя пока что нет постов</span
                 >
             {:else}
-                {#each page.data.userPosts as post}
-                    <Post {post} />
+                {#each userPosts as _, i}
+                    <Post bind:post={userPosts[i]} />
                 {/each}
+                {#if noMoreData}
+                    <span class="action align-self-center"
+                        >Вы долистали до конца</span
+                    >
+                {/if}
             {/if}
         </div>
     {/if}
+    <InfiniteScroll
+        bind:noMoreData
+        onLoad={(data) => (posts = posts.concat(data))}
+        additionalQueryParams="&username={userPage.username}"
+    />
 </div>
 
 <style>
@@ -138,9 +151,5 @@
 
     .gap {
         column-gap: 8px;
-    }
-
-    .hack {
-        height: calc(100% - 16px);
     }
 </style>

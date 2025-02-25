@@ -227,7 +227,7 @@ async fn media_handler(
                 return Err((StatusCode::NO_CONTENT, MEDIA_IS_PROCESSING).into());
             }
             let (media, actual_res) = best_format.unwrap();
-            (media.unwrap(), format!("{id}_{actual_res}.jpg"))
+            (media.unwrap(), format!("{id}_{actual_res}.mp4"))
         }
         "mp3" => {
             if media_type != MediaType::Audio {
@@ -345,6 +345,7 @@ async fn media_upload(
                 let result = match media::process_photo(media_data).await {
                     Ok(r) => r,
                     Err(e) => {
+                        println!("FFMPEG ERROR: {:?}", e.ffmpeg_error);
                         query.processing = Some(false);
                         query.processing_error = Some(e.error);
                         Photo::update(&state.db, id, query).await.unwrap();
@@ -370,6 +371,7 @@ async fn media_upload(
                 let result = match media::process_video(media_data).await {
                     Ok(r) => r,
                     Err(e) => {
+                        println!("FFMPEG ERROR: {:?}", e.ffmpeg_error);
                         query.processing = Some(false);
                         query.processing_error = Some(e.error);
                         Video::update(&state.db, id, query).await.unwrap();
@@ -392,6 +394,7 @@ async fn media_upload(
                 let result = match media::process_audio(media_data).await {
                     Ok(r) => r,
                     Err(e) => {
+                        println!("FFMPEG ERROR: {:?}", e.ffmpeg_error);
                         query.processing = Some(false);
                         query.processing_error = Some(e.error);
                         Audio::update(&state.db, id, query).await.unwrap();

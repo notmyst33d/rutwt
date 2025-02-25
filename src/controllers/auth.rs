@@ -52,6 +52,9 @@ async fn auth_register(
     State(state): State<Arc<SharedState>>,
     Json(request): Json<RegisterRequest>,
 ) -> axum::response::Result<impl IntoResponse> {
+    if request.password.len() < 8 {
+        return Err((StatusCode::BAD_REQUEST, "password too short").into());
+    }
     if (request.realname.len() == 0 || request.realname.len() > 100)
         || (request.username.len() > 64 || request.username.len() < 3)
     {
@@ -127,7 +130,7 @@ mod tests {
             &RegisterRequest {
                 realname: "test2".to_string(),
                 username: "test2".to_string(),
-                password: "test2".to_string(),
+                password: "test2test2test2".to_string(),
             },
         )
         .await;
@@ -138,7 +141,7 @@ mod tests {
 
         let response = send_post(state.clone(), "/api/auth/login", None, &LoginRequest {
             username: "test2".to_string(),
-            password: "test2".to_string(),
+            password: "test2test2test2".to_string(),
         })
         .await;
         assert!(response.status() == StatusCode::OK);

@@ -165,7 +165,6 @@ impl Post {
                 clause
             }
         );
-        println!("{sql}");
         sqlx::query_as(&sql)
             .bind(query.offset)
             .bind(query.count)
@@ -279,7 +278,7 @@ impl Post {
                     .and_then(|id| Some(encode_media_id(MediaType::ProfilePicture, id))),
                 banner_photo_id: self
                     .user_banner_photo_id
-                    .and_then(|id| Some(encode_media_id(MediaType::ProfilePicture, id))),
+                    .and_then(|id| Some(encode_media_id(MediaType::Banner, id))),
             },
             media,
             mentions: vec![],

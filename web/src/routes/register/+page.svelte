@@ -42,20 +42,29 @@
                 alert("Пароли не совпадают");
                 return;
             }
-            const response = await fetch(
-                "/api/auth/register",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        realname,
-                        username,
-                        password,
-                    }),
+            if (password.length < 8) {
+                alert("Пароль слишком короткий, нужно минимум 8 символов");
+                return;
+            }
+            if (username.length < 3) {
+                alert("Юзернейм слишком короткий, нужно минимум 3 символа");
+                return;
+            }
+            if (realname.length === 0) {
+                alert("Имя слишком короткое, нужен минимум 1 символ");
+                return;
+            }
+            const response = await fetch("/api/auth/register", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
                 },
-            );
+                body: JSON.stringify({
+                    realname,
+                    username,
+                    password,
+                }),
+            });
             if (response.status == 200) {
                 const data = await response.json();
                 window.localStorage.setItem("token", data.token);

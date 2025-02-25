@@ -234,7 +234,7 @@ pub async fn process_video(input: Vec<u8>) -> Result<VideoResult, MediaError> {
         "-frames:v",
         "1",
         "-vf",
-        "scale='min(854,iw)':'min(854,ih)':force_original_aspect_ratio=decrease",
+        "scale='min(854,iw)':'min(854,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
     ])
     .await?;
     if !output.status.success() {
@@ -254,9 +254,9 @@ pub async fn process_video(input: Vec<u8>) -> Result<VideoResult, MediaError> {
         "-crf",
         "28",
         "-preset",
-        "ultrafast",
+        "veryfast",
         "-vf",
-        "scale='min(854,iw)':'min(854,ih)':force_original_aspect_ratio=decrease",
+        "scale='min(854,iw)':'min(854,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
     ])
     .await?;
     if !output.status.success() {
@@ -367,6 +367,16 @@ mod test {
         let result = media::process_video(fs::read("testdata/input.mp4").await.unwrap())
             .await
             .unwrap();
+        assert!(result.thumbnail.len() != 0);
+        assert!(result.mp4_480p.len() != 0);
+    }
+
+    #[tokio::test]
+    async fn video_bad_scaling() {
+        let result =
+            media::process_video(fs::read("testdata/input_bad_scaling.mp4").await.unwrap())
+                .await
+                .unwrap();
         assert!(result.thumbnail.len() != 0);
         assert!(result.mp4_480p.len() != 0);
     }

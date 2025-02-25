@@ -24,23 +24,22 @@
     <button
         class="button margin-top-8"
         onclick={async () => {
-            const response = await fetch(
-                "/api/auth/login",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        username,
-                        password,
-                    }),
+            const response = await fetch("/api/auth/login", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
                 },
-            );
+                body: JSON.stringify({
+                    username,
+                    password,
+                }),
+            });
             if (response.status == 200) {
                 const data = await response.json();
                 window.localStorage.setItem("token", data.token);
                 goto("/", { invalidateAll: true });
+            } else {
+                alert("Неверный логин или пароль");
             }
         }}>Войти</button
     >

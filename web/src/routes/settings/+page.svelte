@@ -29,16 +29,14 @@
                     onclick={() => {
                         const filePicker = document.createElement("input");
                         filePicker.type = "file";
-                        filePicker.multiple = true;
                         filePicker.addEventListener("change", (e) =>
                             upload({
-                                event: e,
+                                file: e.target.files[0],
                                 banner: true,
-                                onProcessingEnd: (m) =>
-                                    (bannerPhotoId = m.id),
+                                onProcessingEnd: (m) => (bannerPhotoId = m.id),
                             }),
                         );
-                        filePicker.accept = "image/jpeg";
+                        filePicker.accept = "image/jpeg,image/png,image/webp";
                         filePicker.click();
                     }}
                 >
@@ -71,16 +69,16 @@
                         onclick={() => {
                             const filePicker = document.createElement("input");
                             filePicker.type = "file";
-                            filePicker.multiple = true;
                             filePicker.addEventListener("change", (e) =>
                                 upload({
-                                    event: e,
+                                    file: e.target.files[0],
                                     profilePicture: true,
                                     onProcessingEnd: (m) =>
                                         (profilePicturePhotoId = m.id),
                                 }),
                             );
-                            filePicker.accept = "image/jpeg";
+                            filePicker.accept =
+                                "image/jpeg,image/png,image/webp";
                             filePicker.click();
                         }}
                     >
@@ -141,7 +139,11 @@
                             Authorization: `Bearer ${window.localStorage.getItem("token")}`,
                         },
                     });
-                    goto(`/${username}`, { invalidateAll: true });
+                    if (response.status === 200) {
+                        goto(`/${username}`, { invalidateAll: true });
+                    } else {
+                        alert("Ошибка при изменении данных");
+                    }
                 }}>Применить</button
             >
         </div>

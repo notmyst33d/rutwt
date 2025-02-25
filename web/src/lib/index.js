@@ -1,35 +1,47 @@
-export async function upload(args) {
-    for (const file of args.event.target.files) {
-        const formData = new FormData();
-        let fileType = "photo";
-        if (file.type === "image/jpeg" || file.type === "image/png" || file.type === "image/webp") {
-            if (args.profilePicture !== undefined && args.profilePicture) {
-                formData.append("type", "profile_picture");
-                fileType = "profile_picture";
-            } else if (args.banner !== undefined && args.banner) {
-                formData.append("type", "banner");
-                fileType = "banner";
-            } else {
-                formData.append("type", "photo");
-            }
-        } else if (file.type === "video/mp4" || file.type === "video/webm" || file.type === "video/x-matroska") {
-            formData.append("type", "video");
-            fileType = "video";
-        } else if (file.type === "audio/mpeg" || file.type === "audio/mp4" || file.type === "audio/ogg") {
-            formData.append("type", "audio");
-            fileType = "audio";
+export function upload(args) {
+    const file = args.file;
+    const formData = new FormData();
+    let fileType = "photo";
+    if (file.type === "image/jpeg" || file.type === "image/png" || file.type === "image/webp") {
+        if (args.profilePicture !== undefined && args.profilePicture) {
+            formData.append("type", "profile_picture");
+            fileType = "profile_picture";
+        } else if (args.banner !== undefined && args.banner) {
+            formData.append("type", "banner");
+            fileType = "banner";
         } else {
-            continue;
+            formData.append("type", "photo");
         }
-        formData.append("data", file);
-        const response = await fetch("/api/media/upload", {
-            method: "POST",
-            body: formData,
-            headers: {
-                Authorization: `Bearer ${window.localStorage.getItem("token")}`,
-            },
-        });
-        const data = await response.json();
+    } else if (file.type === "video/mp4" || file.type === "video/webm" || file.type === "video/x-matroska") {
+        formData.append("type", "video");
+        fileType = "video";
+    } else if (file.type === "audio/mpeg" || file.type === "audio/mp4" || file.type === "audio/ogg") {
+        formData.append("type", "audio");
+        fileType = "audio";
+    } else {
+        alert("Неизвестный тип медиа");
+        return;
+    }
+    formData.append("data", file);
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/media/upload", true);
+
+    request.upload.addEventListener("progress", (e) => {
+        if (args.onUploadProgress !== undefined && args.id !== undefined) {
+            args.onUploadProgress({ id: args.id, progress: e.loaded / e.total });
+        }
+    });
+    request.addEventListener("error", () => {
+        if (args.onUploadError !== undefined && args.id !== undefined) {
+            args.onUploadError({ id: args.id, error: "Соединение прервано" });
+        }
+    });
+    request.addEventListener("load", async (e) => {
+        if (request.status !== 200 && args.onUploadError !== undefined && args.id !== undefined) {
+            args.onUploadError({ id: args.id, error: "Ошибка на стороне сервера" });
+            return;
+        }
+        const data = JSON.parse(request.responseText);
         if (args.onProcessingStart !== undefined) {
             args.onProcessingStart({ id: data.id, type: fileType, error: null });
         }
@@ -48,5 +60,8 @@ export async function upload(args) {
                 clearInterval(poll);
             }
         }, 1000);
-    }
+    });
+
+    request.setRequestHeader("Authorization", `Bearer ${window.localStorage.getItem("token")}`);
+    request.send(formData);
 }

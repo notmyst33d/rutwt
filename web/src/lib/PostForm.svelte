@@ -6,6 +6,8 @@
     let { commentPostId } = $props();
     let message = $state();
     let media = $state([]);
+    let uploading = $state([]);
+    let mediaUploadUniqueId = $state(0);
 </script>
 
 <div class="column align-self-center post-form-container">
@@ -23,42 +25,73 @@
                 filePicker.type = "file";
                 filePicker.multiple = true;
                 filePicker.addEventListener("change", (e) => {
-                    for (const file of e.target.files) {
-                        if (media.length >= 5) {
-                            alert(
-                                "Можно иметь максимум 5 медиа файлов на посте.",
-                            );
-                            return;
-                        }
+                    if (
+                        media.length +
+                            uploading.length +
+                            e.target.files.length >
+                        5
+                    ) {
+                        alert("Можно иметь максимум 5 медиа файлов на посте.");
+                        return;
                     }
-                    upload({
-                        event: e,
-                        onProcessingStart: (m) =>
-                            media.push({
-                                id: m.id,
-                                type: m.type,
-                                processing: true,
-                            }),
-                        onProcessingEnd: (m) => {
-                            if (m.error !== undefined && m.error !== null) {
-                                alert("Произошла ошибка при обработке файла");
-                                media = media.filter((mf) => mf.id !== m.id);
-                                return;
-                            }
-                            media = media.map((mf) => {
-                                if (mf.id === m.id) {
-                                    mf.processing = false;
+                    for (const file of e.target.files) {
+                        const fuid = mediaUploadUniqueId;
+                        mediaUploadUniqueId += 1;
+                        uploading.push({ id: fuid, progress: 0 });
+                        upload({
+                            id: fuid,
+                            file,
+                            onUploadError: (e) => {
+                                alert(
+                                    `Произошла ошибка при отправки файла: ${e.error}`,
+                                );
+                                uploading = uploading.filter(
+                                    (e) => e.id !== fuid,
+                                );
+                            },
+                            onUploadProgress: (e) =>
+                                (uploading = uploading.map((u) => {
+                                    if (u.id == fuid) {
+                                        u.progress = e.progress;
+                                    }
+                                    return u;
+                                })),
+                            onProcessingStart: (m) => {
+                                uploading = uploading.filter(
+                                    (e) => e.id !== fuid,
+                                );
+                                media.push({
+                                    id: m.id,
+                                    type: m.type,
+                                    processing: true,
+                                });
+                            },
+                            onProcessingEnd: (m) => {
+                                if (m.error !== undefined && m.error !== null) {
+                                    alert(
+                                        `Произошла ошибка при обработке файла: ${m.error}`,
+                                    );
+                                    media = media.filter(
+                                        (mf) => mf.id !== m.id,
+                                    );
+                                    return;
                                 }
-                                return mf;
-                            });
-                        },
-                    });
+                                media = media.map((mf) => {
+                                    if (mf.id === m.id) {
+                                        mf.processing = false;
+                                    }
+                                    return mf;
+                                });
+                            },
+                        });
+                    }
                 });
                 filePicker.accept =
                     "image/jpeg,image/png,image/webp,audio/mpeg,audio/mp4,audio/ogg,video/mp4,video/webm,video/x-matroska";
                 filePicker.click();
             }}
-            ><svg
+        >
+            <svg
                 xmlns="http://www.w3.org/2000/svg"
                 height="24px"
                 viewBox="0 -960 960 960"
@@ -67,15 +100,22 @@
                 ><path
                     d="M720-330q0 104-73 177T470-80q-104 0-177-73t-73-177v-370q0-75 52.5-127.5T400-880q75 0 127.5 52.5T580-700v350q0 46-32 78t-78 32q-46 0-78-32t-32-78v-330q0-17 11.5-28.5T400-720q17 0 28.5 11.5T440-680v330q0 13 8.5 21.5T470-320q13 0 21.5-8.5T500-350v-350q-1-42-29.5-71T400-800q-42 0-71 29t-29 71v370q-1 71 49 120.5T470-160q70 0 119-49.5T640-330v-350q0-17 11.5-28.5T680-720q17 0 28.5 11.5T720-680v350Z"
                 /></svg
-            ></button
-        >
+            >
+        </button>
         <!-- svelte-ignore a11y_consider_explicit_label -->
         <button
             class="button modal-button"
             onclick={async () => {
+                if (uploading.length !== 0) {
+                    alert("Подождите пока все файлы отправятся");
+                    return;
+                }
                 const mediaIds = [];
                 for (const mediaEntry of media) {
-                    if (mediaEntry.processing) return;
+                    if (mediaEntry.processing) {
+                        alert("Подождите пока все файлы отправятся");
+                        return;
+                    }
                     mediaIds.push(mediaEntry.id);
                 }
                 const body = {
@@ -106,7 +146,8 @@
                     }
                 }
             }}
-            ><svg
+        >
+            <svg
                 xmlns="http://www.w3.org/2000/svg"
                 height="24px"
                 viewBox="0 -960 960 960"
@@ -115,12 +156,16 @@
                 ><path
                     d="M792-443 176-183q-20 8-38-3.5T120-220v-520q0-22 18-33.5t38-3.5l616 260q25 11 25 37t-25 37ZM200-280l474-200-474-200v140l240 60-240 60v140Zm0 0v-400 400Z"
                 /></svg
-            ></button
-        >
+            >
+        </button>
     </div>
     <div class="row post-form-media">
         {#each media as mediaEntry}
-            <div class="post-form-media-container">
+            <div
+                class="post-form-media-container {mediaEntry.processing
+                    ? 'progress-bg'
+                    : ''}"
+            >
                 {#if mediaEntry.processing}
                     <div class="loader"></div>
                 {:else if mediaEntry.type === "photo" || mediaEntry.type === "video"}
@@ -168,12 +213,68 @@
                 {/if}
             </div>
         {/each}
+        {#each uploading as uploadingData}
+            <div class="post-form-media-container progress-bg">
+                <div class="progress-bar-container">
+                    <div
+                        class="progress-bar"
+                        style="width: {Math.round(
+                            uploadingData.progress * 100,
+                        )}%;"
+                    ></div>
+                </div>
+                <span class="progress-text"
+                    >{Math.round(uploadingData.progress * 100)}%</span
+                >
+            </div>
+        {/each}
     </div>
 </div>
 
 <style>
     .music-note {
         padding: 16px;
+    }
+
+    .progress-bar-container {
+        background-color: #ffffff80;
+        border-radius: 64px;
+        margin: 26px 8px 0px 8px;
+    }
+
+    .progress-bar {
+        background-color: #ffffff;
+        height: 6px;
+        border-radius: 64px;
+    }
+
+    .progress-bg {
+        border-color: #ffffff67;
+        background: linear-gradient(45deg, #6495ed, #4b0082, #d2691e);
+        background-size: 200% 200%;
+        animation-name: upload;
+        animation-duration: 4s;
+        animation-iteration-count: infinite;
+        animation-timing-function: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+    }
+
+    .progress-text {
+        display: inline-block;
+        width: 100%;
+        font-weight: 900;
+        text-align: center;
+    }
+
+    @keyframes upload {
+        0% {
+            background-position: 0% 100%;
+        }
+        50% {
+            background-position: 100% 0%;
+        }
+        100% {
+            background-position: 0% 100%;
+        }
     }
 
     .loader {
@@ -184,6 +285,7 @@
         border-radius: 50%;
         animation: l5 1s infinite linear alternate;
     }
+
     @keyframes l5 {
         0% {
             box-shadow:

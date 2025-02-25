@@ -13,7 +13,6 @@ pub const USER_IS_NOT_FOLLOWED: &'static str = "user is not followed";
 
 pub const CANNOT_FIND_POST: &'static str = "cannot find post";
 pub const CANNOT_INSERT_POST: &'static str = "cannot insert post";
-pub const CANNOT_UPDATE_POST: &'static str = "cannot update post";
 pub const CANNOT_DELETE_POST: &'static str = "cannot delete post";
 
 pub const POST_IS_NOT_LIKED: &'static str = "post is not liked";
