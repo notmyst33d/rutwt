@@ -1,0 +1,45 @@
+services:
+  api:
+    env_file: .env.production
+    build:
+      context: ./api
+    depends_on:
+      - primary
+      - replica1
+
+  web:
+    env_file: .env.production
+    build:
+      context: ./web
+    ports:
+      - "80:6969"
+
+  primary:
+    image: "postgres:alpine"
+    restart: always
+    volumes:
+      - ./db/primary:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256\nhost replication all 0.0.0.0/0 md5"
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    command: |
+      postgres -c wal_level=replica -c hot_standby=on -c max_wal_senders=10 -c max_replication_slots=10 -c hot_standby_feedback=on
+
+  replica1:
+    image: "postgres:alpine"
+    restart: always
+    volumes:
+      - ./db/replica1:/var/lib/postgresql/data
+    environment:
+      PGUSER: replicator
+      PGPASSWORD: replicator
+    command: |
+      bash -c "
+      chown postgres:postgres /var/lib/postgresql/data
+      chmod 700 /var/lib/postgresql/data
+      gosu postgres pg_basebackup --host=primary --pgdata=/var/lib/postgresql/data --wal-method=stream --write-recovery-conf --slot=replica1
+      gosu postgres postgres
+      "
+    depends_on:
+      - primary

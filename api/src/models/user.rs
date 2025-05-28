@@ -1,4 +1,4 @@
-use sqlx::{FromRow, Pool, Sqlite, sqlite::SqliteQueryResult};
+use sqlx::{FromRow, Row};
 
 use crate::{
     cond,
@@ -8,7 +8,8 @@ use crate::{
     },
 };
 
-#[derive(FromRow)]
+use super::{DefaultRow, ReadOnlyPool, ReadWritePool};
+
 pub struct User {
     pub id: i64,
     pub username: String,
@@ -34,24 +35,21 @@ pub struct UserUpdateQuery {
 
 impl User {
     pub async fn insert(
-        db: &Pool<Sqlite>,
+        db: &ReadWritePool,
         username: &str,
         realname: &str,
         hashed_password: &str,
     ) -> Result<i64, sqlx::Error> {
-        Ok(
-            sqlx::query("INSERT INTO users (id, username, realname, hashed_password, profile_picture_photo_id, banner_photo_id, bio, deleted) VALUES (NULL, $1, $2, $3, NULL, NULL, NULL, 0)")
-                .bind(username)
-                .bind(realname)
-                .bind(hashed_password)
-                .execute(db)
-                .await?
-                .last_insert_rowid(),
-        )
+        sqlx::query_scalar("INSERT INTO users (username, realname, hashed_password, profile_picture_photo_id, banner_photo_id, bio, deleted) VALUES ($1, $2, $3, NULL, NULL, NULL, 0) RETURNING id")
+            .bind(username)
+            .bind(realname)
+            .bind(hashed_password)
+            .fetch_one(&db.0)
+            .await
     }
 
     pub async fn find(
-        db: &Pool<Sqlite>,
+        db: &ReadOnlyPool,
         id: Option<i64>,
         username: Option<&str>,
         self_user_id: Option<i64>,
@@ -87,15 +85,15 @@ impl User {
             .bind(id)
             .bind(username)
             .bind(self_user_id)
-            .fetch_one(db)
+            .fetch_one(&db.0)
             .await
     }
 
     pub async fn update(
-        db: &Pool<Sqlite>,
+        db: &ReadWritePool,
         id: i64,
         query: UserUpdateQuery,
-    ) -> Result<SqliteQueryResult, sqlx::Error> {
+    ) -> Result<(), sqlx::Error> {
         let sql = format!("UPDATE users SET {} WHERE id = $1", {
             let mut first = true;
             let mut clause = String::new();
@@ -130,44 +128,65 @@ impl User {
             .bind(query.bio)
             .bind(query.profile_picture_photo_id)
             .bind(query.banner_photo_id)
-            .execute(db)
-            .await
+            .execute(&db.0)
+            .await?;
+        Ok(())
     }
 
     pub async fn follow_insert(
-        db: &Pool<Sqlite>,
+        db: &ReadWritePool,
         user_id: i64,
         sub_user_id: i64,
-    ) -> Result<SqliteQueryResult, sqlx::Error> {
+    ) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO follows (user_id, sub_user_id) VALUES ($1, $2)")
             .bind(user_id)
             .bind(sub_user_id)
-            .execute(db)
-            .await
+            .execute(&db.0)
+            .await?;
+        Ok(())
     }
 
-    pub async fn follow_exists(db: &Pool<Sqlite>, user_id: i64, sub_user_id: i64) -> bool {
+    pub async fn follow_exists(db: &ReadOnlyPool, user_id: i64, sub_user_id: i64) -> bool {
         sqlx::query("SELECT * FROM follows WHERE user_id = $1 AND sub_user_id = $2")
             .bind(user_id)
             .bind(sub_user_id)
-            .fetch_one(db)
+            .fetch_one(&db.0)
             .await
             .map_or(false, |_| true)
     }
 
     pub async fn follow_delete(
-        db: &Pool<Sqlite>,
+        db: &ReadWritePool,
         user_id: i64,
         sub_user_id: i64,
-    ) -> Result<SqliteQueryResult, sqlx::Error> {
+    ) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM follows WHERE user_id = $1 AND sub_user_id = $2")
             .bind(user_id)
             .bind(sub_user_id)
-            .execute(db)
-            .await
+            .execute(&db.0)
+            .await?;
+        Ok(())
     }
+}
 
-    pub fn into_response(self) -> UserResponse {
+impl FromRow<'_, DefaultRow> for User {
+    fn from_row(row: &DefaultRow) -> Result<Self, sqlx::Error> {
+        Ok(Self {
+            id: row.try_get("id")?,
+            username: row.try_get("username")?,
+            realname: row.try_get("realname")?,
+            bio: row.try_get("bio")?,
+            hashed_password: row.try_get("hashed_password")?,
+            profile_picture_photo_id: row.try_get("profile_picture_photo_id")?,
+            banner_photo_id: row.try_get("banner_photo_id")?,
+            followers: row.try_get("followers")?,
+            following: row.try_get::<i64, _>("following")? == 1,
+        })
+    }
+}
+
+impl Into<UserResponse> for User {
+    fn into(self) -> UserResponse {
         UserResponse {
             id: self.id,
             followers: self.followers,

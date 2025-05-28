@@ -9,12 +9,13 @@ pub mod instrumentation {
     };
     use http_body_util::BodyExt;
     use serde::{Deserialize, Serialize};
-    use sqlx::SqlitePool;
+    use sqlx::sqlite::SqlitePoolOptions;
     use tower::ServiceExt;
 
     use crate::{
         SharedState, app,
         controllers::auth::{RegisterRequest, UserMixedAuthResponse},
+        models::{ReadOnlyPool, ReadWritePool},
     };
 
     pub async fn send_post<T: Serialize>(
@@ -39,17 +40,22 @@ pub mod instrumentation {
     pub async fn init() -> (Arc<SharedState>, String) {
         unsafe { std::env::set_var("JWT_SECRET", "test") };
 
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("sqlite://")
+            .unwrap();
         let state = Arc::new(SharedState {
-            db: SqlitePool::connect(":memory:").await.unwrap(),
+            db: ReadOnlyPool(pool.clone()),
+            rwdb: ReadWritePool(pool),
         });
 
         sqlx::query(include_str!("../data/0000-base-schema.sql"))
-            .execute(&state.db)
+            .execute(&state.db.0)
             .await
             .unwrap();
 
         sqlx::query(include_str!("../data/0001-media-update.sql"))
-            .execute(&state.db)
+            .execute(&state.db.0)
             .await
             .unwrap();
 

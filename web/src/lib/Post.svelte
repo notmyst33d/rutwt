@@ -67,13 +67,15 @@
                     <div class="column grow fade">
                         <span class="margin-bottom-8 fade">
                             <span class="artist"
-                                >{media.audio.artist !== null
+                                >{media.audio.artist !== null &&
+                                media.audio.artist !== ""
                                     ? media.audio.artist
                                     : "Неизвестный исполнитель"}</span
                             >
                             -
                             <span class="title"
-                                >{media.audio.title !== null
+                                >{media.audio.title !== null &&
+                                media.audio.title !== ""
                                     ? media.audio.title
                                     : "Без названия"}</span
                             >

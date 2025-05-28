@@ -89,7 +89,7 @@ async fn posts_like(
     if Post::like_exists(&state.db, query.id, claims.user_id).await {
         return Err((StatusCode::BAD_REQUEST, POST_IS_ALREADY_LIKED).into());
     };
-    Post::like_insert(&state.db, query.id, claims.user_id)
+    Post::like_insert(&state.rwdb, query.id, claims.user_id)
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_INSERT_POST))?;
     Ok((StatusCode::OK, ""))
@@ -103,7 +103,7 @@ async fn posts_unlike(
     if !Post::like_exists(&state.db, query.id, claims.user_id).await {
         return Err((StatusCode::BAD_REQUEST, POST_IS_NOT_LIKED).into());
     };
-    Post::like_delete(&state.db, query.id, claims.user_id)
+    Post::like_delete(&state.rwdb, query.id, claims.user_id)
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_DELETE_POST))?;
     Ok((StatusCode::OK, ""))
@@ -138,8 +138,8 @@ async fn posts_find(
     Ok(Json(
         posts
             .into_iter()
-            .map(|p| p.into_response())
-            .collect::<Vec<_>>(),
+            .map(Post::into)
+            .collect::<Vec<PostResponse>>(),
     ))
 }
 
@@ -176,7 +176,7 @@ async fn posts_create(
     }
 
     let id = Post::insert(
-        &state.db,
+        &state.rwdb,
         claims.user_id,
         filtered_message.as_deref(),
         request.comment_post_id.is_some(),
@@ -187,9 +187,9 @@ async fn posts_create(
     for media_id in request.media {
         let (media_type, media_inner_id) = parse_media_id(&media_id)?;
         match media_type {
-            MediaType::Photo => Post::photo_insert(&state.db, id, media_inner_id).await,
-            MediaType::Video => Post::video_insert(&state.db, id, media_inner_id).await,
-            MediaType::Audio => Post::audio_insert(&state.db, id, media_inner_id).await,
+            MediaType::Photo => Post::photo_insert(&state.rwdb, id, media_inner_id).await,
+            MediaType::Video => Post::video_insert(&state.rwdb, id, media_inner_id).await,
+            MediaType::Audio => Post::audio_insert(&state.rwdb, id, media_inner_id).await,
             MediaType::ProfilePicture | MediaType::Banner => {
                 return Err((
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -202,7 +202,7 @@ async fn posts_create(
     }
 
     if let Some(comment_post_id) = request.comment_post_id {
-        Post::comment_insert(&state.db, comment_post_id, claims.user_id, id)
+        Post::comment_insert(&state.rwdb, comment_post_id, claims.user_id, id)
             .await
             .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_INSERT_POST))?;
     }

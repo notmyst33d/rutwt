@@ -92,13 +92,16 @@ async fn auth_register(
     }
 
     let user_id = User::insert(
-        &state.db,
+        &state.rwdb,
         &request.username,
         &request.realname,
         &request.password,
     )
     .await
-    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_INSERT_USER))?;
+    .map_err(|e| {
+        println!("{e:?}");
+        (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_INSERT_USER)
+    })?;
 
     Ok(Json(UserMixedAuthResponse {
         token: create_token(user_id)?,
@@ -139,10 +142,15 @@ mod tests {
         let data = json::<UserMixedAuthResponse>(response).await;
         assert!(data.token.len() != 0);
 
-        let response = send_post(state.clone(), "/api/auth/login", None, &LoginRequest {
-            username: "test2".to_string(),
-            password: "test2test2test2".to_string(),
-        })
+        let response = send_post(
+            state.clone(),
+            "/api/auth/login",
+            None,
+            &LoginRequest {
+                username: "test2".to_string(),
+                password: "test2test2test2".to_string(),
+            },
+        )
         .await;
         assert!(response.status() == StatusCode::OK);
 

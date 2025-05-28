@@ -4,6 +4,7 @@ mod models;
 mod services;
 mod test;
 
+use crate::models::{DefaultPool, ReadOnlyPool, ReadWritePool};
 use axum::{
     RequestPartsExt, Router,
     extract::{DefaultBodyLimit, FromRequestParts},
@@ -16,7 +17,6 @@ use axum_extra::{
 use chrono::{Duration, Utc};
 use errors::UNAUTHORIZED;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use sqlx::{Pool, Sqlite, SqlitePool};
 use std::{error::Error, sync::Arc};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
@@ -31,14 +31,15 @@ macro_rules! cond {
 }
 
 #[derive(Clone)]
-struct SharedState {
-    db: Pool<Sqlite>,
+pub struct SharedState {
+    pub db: ReadOnlyPool,
+    pub rwdb: ReadWritePool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Claims {
-    user_id: i64,
-    exp: i64,
+    pub user_id: i64,
+    pub exp: i64,
 }
 
 impl<S> FromRequestParts<S> for Claims
@@ -53,7 +54,7 @@ where
             .await
             .map_err(|_| (StatusCode::UNAUTHORIZED, UNAUTHORIZED))?;
 
-        let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+        let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET not set");
 
         let token_data = decode::<Claims>(
             bearer.token(),
@@ -72,7 +73,7 @@ fn create_token(user_id: i64) -> Result<String, (StatusCode, &'static str)> {
         exp: (Utc::now() + Duration::days(1)).timestamp(),
     };
 
-    let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET not set");
 
     encode(
         &Header::default(),
@@ -98,17 +99,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(format!(
         "0.0.0.0:{}",
         std::env::var("PORT")
-            .unwrap_or("6969".to_string())
-            .parse::<u16>()
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
             .unwrap_or(6969)
     ))
     .await?;
+
     axum::serve(
         listener,
         app(Arc::new(SharedState {
-            db: SqlitePool::connect("sqlite://main.db").await?,
+            db: ReadOnlyPool(
+                DefaultPool::connect_lazy(
+                    &std::env::var("READ_ONLY_DATABASE_URL")
+                        .expect("READ_ONLY_DATABASE_URL not set"),
+                )
+                .unwrap(),
+            ),
+            rwdb: ReadWritePool(
+                DefaultPool::connect_lazy(
+                    &std::env::var("READ_WRITE_DATABASE_URL")
+                        .expect("READ_WRITE_DATABASE_URL not set"),
+                )
+                .unwrap(),
+            ),
         })),
     )
     .await?;
+
     Ok(())
 }

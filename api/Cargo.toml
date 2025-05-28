@@ -1,0 +1,42 @@
+[package]
+name = "rutwt"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+sqlite = []
+postgres = []
+
+[[bin]]
+name = "migration-tool"
+
+[dependencies]
+axum = { version = "0.8.1", features = ["multipart"] }
+axum-extra = { version = "0.10.0", features = ["typed-header"] }
+base64 = "0.22.1"
+chrono = "0.4.39"
+futures = "0.3.31"
+jsonwebtoken = "9.3.1"
+regex = "1.11.1"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.138"
+sha2 = "0.10.9"
+sqlite2pg = { version = "0.1.0", path = "../sqlite2pg" }
+sqlx = { version = "0.8.3", features = ["postgres", "runtime-tokio", "sqlite"] }
+tempfile = "3.16.0"
+thiserror = "2.0.12"
+tokio = { version = "1.43.0", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "process",
+    "io-util",
+    "fs",
+    "sync",
+] }
+tower-http = { version = "0.6.2", features = ["cors", "fs"] }
+
+[dev-dependencies]
+http-body-util = "0.1.2"
+serde_json = "1.0.138"
+tower = "0.5.2"

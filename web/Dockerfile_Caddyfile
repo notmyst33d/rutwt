@@ -1,0 +1,10 @@
+http://:80 {
+    route /api* {
+        reverse_proxy http://api:6969
+    }
+    route /* {
+        encode gzip
+        try_files {path} index.html
+        file_server
+    }
+}

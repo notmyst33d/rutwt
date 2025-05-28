@@ -1,22 +1,21 @@
-use crate::{
-    cond,
-    controllers::{
-        media::{MediaType, encode_media_id},
-        posts::{PostMedia, PostMediaAudio, PostResponse},
-        users::UserResponse,
-    },
+use crate::controllers::{
+    media::{MediaType, encode_media_id},
+    posts::{PostMedia, PostMediaAudio, PostResponse},
+    users::UserResponse,
 };
 use serde::{Deserialize, Deserializer};
-use sqlx::{FromRow, Pool, Sqlite, sqlite::SqliteQueryResult, types::Json};
+use sqlx::{FromRow, QueryBuilder, Row};
+
+use super::{DefaultRow, ReadOnlyPool, ReadWritePool};
 
 macro_rules! media_insert {
     ($name:literal, $fnname:ident, $idname:ident) => {
         pub async fn $fnname(
-            db: &Pool<Sqlite>,
+            db: &ReadWritePool,
             post_id: i64,
             $idname: i64,
-        ) -> Result<i64, sqlx::Error> {
-            Ok(sqlx::query(concat!(
+        ) -> Result<(), sqlx::Error> {
+            sqlx::query(concat!(
                 "INSERT INTO posts_",
                 $name,
                 "s (post_id, ",
@@ -25,9 +24,9 @@ macro_rules! media_insert {
             ))
             .bind(post_id)
             .bind($idname)
-            .execute(db)
-            .await?
-            .last_insert_rowid())
+            .execute(&db.0)
+            .await?;
+            Ok(())
         }
     };
 }
@@ -49,15 +48,15 @@ pub struct PostAudio {
     pub thumbnail: bool,
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Debug)]
 pub struct Post {
     pub post_id: i64,
     pub post_message: Option<String>,
     pub post_like_count: i64,
     pub post_comment_count: i64,
-    pub post_photos: Json<Vec<i64>>,
-    pub post_videos: Json<Vec<i64>>,
-    pub post_audios: Json<Vec<PostAudio>>,
+    pub post_photos: Vec<i64>,
+    pub post_videos: Vec<i64>,
+    pub post_audios: Vec<PostAudio>,
     pub post_comment: bool,
     pub post_liked: bool,
     pub user_id: i64,
@@ -83,42 +82,41 @@ pub struct PostFindQuery {
 
 impl Post {
     pub async fn insert(
-        db: &Pool<Sqlite>,
+        db: &ReadWritePool,
         user_id: i64,
         message: Option<&str>,
         comment: bool,
     ) -> Result<i64, sqlx::Error> {
-        Ok(sqlx::query(
-            "INSERT INTO posts (id, user_id, message, comment, deleted) VALUES (NULL, $1, $2, $3, 0)",
+        Ok(sqlx::query_scalar(
+            "INSERT INTO posts (user_id, message, comment, deleted) VALUES ($1, $2, cast($3 as INTEGER), 0) RETURNING id",
         )
         .bind(user_id)
         .bind(message)
         .bind(comment)
-        .execute(db)
-        .await?
-        .last_insert_rowid())
+        .fetch_one(&db.0)
+        .await?)
     }
 
-    pub async fn exists(db: &Pool<Sqlite>, id: i64) -> bool {
+    pub async fn exists(db: &ReadOnlyPool, id: i64) -> bool {
         sqlx::query("SELECT * FROM posts WHERE id = $1")
             .bind(id)
-            .fetch_one(db)
+            .fetch_one(&db.0)
             .await
             .map_or(false, |_| true)
     }
 
-    pub async fn find(db: &Pool<Sqlite>, query: PostFindQuery) -> Result<Vec<Post>, sqlx::Error> {
-        let sql = format!(
+    pub async fn find(db: &ReadOnlyPool, query: PostFindQuery) -> Result<Vec<Post>, sqlx::Error> {
+        let mut builder = QueryBuilder::new(
             "
         SELECT
             posts.id AS post_id,
             posts.message AS post_message,
             posts.comment AS post_comment,
-            (SELECT json_group_array(photo_id) FROM posts_photos WHERE post_id = posts.id) AS post_photos,
-            (SELECT json_group_array(video_id) FROM posts_videos WHERE post_id = posts.id) AS post_videos,
+            (SELECT concat('[', string_agg(cast(photo_id as TEXT), ','), ']') FROM posts_photos WHERE post_id = posts.id) AS post_photos,
+            (SELECT concat('[', string_agg(cast(video_id as TEXT), ','), ']') FROM posts_videos WHERE post_id = posts.id) AS post_videos,
             (
                 SELECT
-                    json_group_array(json_object('id', audios.id, 'title', audios.title, 'artist', audios.artist, 'thumbnail', audios.thumbnail IS NOT NULL))
+                    concat('[', string_agg(concat('{\"id\":', audios.id, ',\"title\":\"', replace(audios.title, '\"', '\\\"'), '\",\"artist\":\"', replace(audios.artist, '\"', '\\\"'), '\",\"thumbnail\":', cast(audios.thumbnail IS NOT NULL as INTEGER), '}'), ','), ']')
                 FROM posts_audios
                 INNER JOIN audios ON audios.id = posts_audios.audio_id
                 WHERE post_id = posts.id
@@ -136,103 +134,126 @@ impl Post {
             (SELECT COUNT(*) FROM follows WHERE sub_user_id = users.id) AS user_followers
         FROM posts
         INNER JOIN users ON users.id = posts.user_id
-        {}
-        ORDER BY posts.id DESC LIMIT $2 OFFSET $1
-        ",
-            {
-                let mut first = true;
-                let mut clause = String::new();
-                let mut append = |cond| {
-                    clause += if first {
-                        first = false;
-                        " WHERE "
-                    } else { " AND " };
-                    clause += cond;
-                };
-                if query.id.is_some() && query.comments {
-                    append("posts.id IN (SELECT comment_post_id FROM comments WHERE post_id = $3)");
-                } else if query.id.is_some() {
-                    append("posts.id = $3");
-                } else if !query.comments {
-                    append("posts.comment = 0");
-                } else if query.comments {
-                    append("posts.comment = 1");
-                }
-                cond!(query.username.is_some(), append, "users.username = $4");
-                cond!(query.feed, append, "users.id IN (SELECT sub_user_id FROM follows WHERE user_id = $5)");
-                append("users.deleted = 0");
-                append("posts.deleted = 0");
-                clause
-            }
-        );
-        sqlx::query_as(&sql)
+        WHERE
+        ");
+
+        let mut match_builder = builder.separated(" AND ");
+        if query.id.is_some() && query.comments {
+            match_builder
+                .push("posts.id IN (SELECT comment_post_id FROM comments WHERE post_id = $3)");
+        } else if query.id.is_some() {
+            match_builder.push("posts.id = $3");
+        } else if !query.comments {
+            match_builder.push("posts.comment = 0");
+        } else if query.comments {
+            match_builder.push("posts.comment = 1");
+        }
+        if query.username.is_some() {
+            match_builder.push("users.username = $4");
+        }
+        if query.feed {
+            match_builder.push("users.id IN (SELECT sub_user_id FROM follows WHERE user_id = $5)");
+        }
+        match_builder.push("users.deleted = 0");
+        match_builder.push("posts.deleted = 0");
+        builder.push(" ORDER BY posts.id DESC LIMIT $2 OFFSET $1");
+        builder
+            .build_query_as()
             .bind(query.offset)
             .bind(query.count)
             .bind(query.id)
             .bind(query.username)
             .bind(query.self_user_id)
-            .fetch_all(db)
+            .fetch_all(&db.0)
             .await
     }
 
     pub async fn like_insert(
-        db: &Pool<Sqlite>,
+        db: &ReadWritePool,
         post_id: i64,
         user_id: i64,
-    ) -> Result<i64, sqlx::Error> {
-        Ok(
-            sqlx::query("INSERT INTO likes (post_id, user_id) VALUES ($1, $2)")
-                .bind(post_id)
-                .bind(user_id)
-                .execute(db)
-                .await?
-                .last_insert_rowid(),
-        )
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO likes (post_id, user_id) VALUES ($1, $2)")
+            .bind(post_id)
+            .bind(user_id)
+            .execute(&db.0)
+            .await?;
+        Ok(())
     }
 
     pub async fn comment_insert(
-        db: &Pool<Sqlite>,
+        db: &ReadWritePool,
         post_id: i64,
         user_id: i64,
         comment_post_id: i64,
-    ) -> Result<i64, sqlx::Error> {
-        Ok(sqlx::query(
-            "INSERT INTO comments (post_id, user_id, comment_post_id) VALUES ($1, $2, $3)",
-        )
-        .bind(post_id)
-        .bind(user_id)
-        .bind(comment_post_id)
-        .execute(db)
-        .await?
-        .last_insert_rowid())
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO comments (post_id, user_id, comment_post_id) VALUES ($1, $2, $3)")
+            .bind(post_id)
+            .bind(user_id)
+            .bind(comment_post_id)
+            .execute(&db.0)
+            .await?;
+        Ok(())
     }
 
-    pub async fn like_exists(db: &Pool<Sqlite>, post_id: i64, user_id: i64) -> bool {
+    pub async fn like_exists(db: &ReadOnlyPool, post_id: i64, user_id: i64) -> bool {
         sqlx::query("SELECT * FROM likes WHERE post_id = $1 AND user_id = $2")
             .bind(post_id)
             .bind(user_id)
-            .fetch_one(db)
+            .fetch_optional(&db.0)
             .await
-            .map_or(false, |_| true)
+            .and_then(|v| Ok(v.is_some()))
+            .unwrap_or(false)
     }
 
     pub async fn like_delete(
-        db: &Pool<Sqlite>,
+        db: &ReadWritePool,
         post_id: i64,
         user_id: i64,
-    ) -> Result<SqliteQueryResult, sqlx::Error> {
+    ) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM likes WHERE post_id = $1 AND user_id = $2")
             .bind(post_id)
             .bind(user_id)
-            .execute(db)
-            .await
+            .execute(&db.0)
+            .await?;
+        Ok(())
     }
 
     media_insert!("photo", photo_insert, photo_id);
     media_insert!("video", video_insert, video_id);
     media_insert!("audio", audio_insert, audio_id);
+}
 
-    pub fn into_response(self) -> PostResponse {
+impl FromRow<'_, DefaultRow> for Post {
+    fn from_row(row: &DefaultRow) -> Result<Self, sqlx::Error> {
+        let post_photos: Vec<i64> = serde_json::from_str(row.try_get("post_photos")?).unwrap();
+        let post_videos: Vec<i64> = serde_json::from_str(row.try_get("post_videos")?).unwrap();
+        let post_audios: Vec<PostAudio> =
+            serde_json::from_str(row.try_get("post_audios")?).unwrap();
+        Ok(Self {
+            post_id: row.try_get("post_id")?,
+            post_message: row.try_get("post_message")?,
+            post_like_count: row.try_get("post_like_count")?,
+            post_comment_count: row.try_get("post_comment_count")?,
+            post_photos,
+            post_videos,
+            post_audios,
+            post_comment: row.try_get::<i16, _>("post_comment")? == 1,
+            post_liked: row.try_get::<i64, _>("post_liked")? == 1,
+            user_id: row.try_get("user_id")?,
+            user_followers: row.try_get("user_followers")?,
+            user_username: row.try_get("user_username")?,
+            user_realname: row.try_get("user_realname")?,
+            user_bio: row.try_get("user_bio")?,
+            user_following: row.try_get::<i64, _>("user_following")? == 1,
+            user_profile_picture_photo_id: row.try_get("user_profile_picture_photo_id")?,
+            user_banner_photo_id: row.try_get("user_banner_photo_id")?,
+        })
+    }
+}
+
+impl Into<PostResponse> for Post {
+    fn into(self) -> PostResponse {
         let mut media = vec![];
         self.post_photos.iter().for_each(|p| {
             media.push(PostMedia {

@@ -46,11 +46,11 @@ async fn users_username(
     State(state): State<Arc<SharedState>>,
     Path(username): Path<String>,
 ) -> axum::response::Result<impl IntoResponse> {
-    Ok(Json(
+    Ok(Json::<UserResponse>(
         User::find(&state.db, None, Some(&username), Some(claims.user_id))
             .await
             .map_err(|_| (StatusCode::NOT_FOUND, CANNOT_FIND_USER))?
-            .into_response(),
+            .into(),
     ))
 }
 
@@ -58,11 +58,11 @@ async fn users_self(
     claims: Claims,
     State(state): State<Arc<SharedState>>,
 ) -> axum::response::Result<impl IntoResponse> {
-    Ok(Json(
+    Ok(Json::<UserResponse>(
         User::find(&state.db, Some(claims.user_id), None, Some(claims.user_id))
             .await
             .map_err(|_| (StatusCode::NOT_FOUND, CANNOT_FIND_USER))?
-            .into_response(),
+            .into(),
     ))
 }
 
@@ -77,7 +77,7 @@ async fn users_follow(
     if User::follow_exists(&state.db, claims.user_id, query.id).await {
         return Err((StatusCode::BAD_REQUEST, USER_IS_ALREADY_FOLLOWED).into());
     };
-    User::follow_insert(&state.db, claims.user_id, query.id)
+    User::follow_insert(&state.rwdb, claims.user_id, query.id)
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_INSERT_USER))?;
     Ok((StatusCode::OK, ""))
@@ -94,7 +94,7 @@ async fn users_unfollow(
     if !User::follow_exists(&state.db, claims.user_id, query.id).await {
         return Err((StatusCode::BAD_REQUEST, USER_IS_NOT_FOLLOWED).into());
     };
-    User::follow_delete(&state.db, claims.user_id, query.id)
+    User::follow_delete(&state.rwdb, claims.user_id, query.id)
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_DELETE_USER))?;
     Ok((StatusCode::OK, ""))
@@ -161,7 +161,7 @@ async fn users_settings(
         .banner_photo_id
         .and_then(|id| parse_media_id(&id).ok().and_then(|id| Some(id.1)));
 
-    User::update(&state.db, claims.user_id, query)
+    User::update(&state.rwdb, claims.user_id, query)
         .await
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, CANNOT_UPDATE_USER))?;
 

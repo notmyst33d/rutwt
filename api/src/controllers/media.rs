@@ -334,7 +334,7 @@ async fn media_upload(
 
     let id = match media_type.as_str() {
         "photo" | "profile_picture" | "banner" => {
-            let id = Photo::insert(&state.db, claims.user_id).await.unwrap();
+            let id = Photo::insert(&state.rwdb, claims.user_id).await.unwrap();
             let media_type_id = match media_type.as_str() {
                 "profile_picture" => MediaType::ProfilePicture,
                 "banner" => MediaType::Banner,
@@ -348,9 +348,9 @@ async fn media_upload(
                         println!("FFMPEG ERROR: {:?}", e.ffmpeg_error);
                         query.processing = Some(false);
                         query.processing_error = Some(e.error);
-                        Photo::update(&state.db, id, query).await.unwrap();
+                        query.update(&state.rwdb, id).await.unwrap();
                         sleep(Duration::from_secs(10)).await;
-                        Photo::delete(&state.db, id).await.unwrap();
+                        Photo::delete(&state.rwdb, id).await.unwrap();
                         return;
                     }
                 };
@@ -360,12 +360,12 @@ async fn media_upload(
                 query.jpg_large = result.jpg_large;
                 query.profile_picture = Some(media_type == "profile_picture");
                 query.banner = Some(media_type == "banner");
-                Photo::update(&state.db, id, query).await.unwrap();
+                query.update(&state.rwdb, id).await.unwrap();
             });
             encode_media_id(media_type_id, id)
         }
         "video" => {
-            let id = Video::insert(&state.db, claims.user_id).await.unwrap();
+            let id = Video::insert(&state.rwdb, claims.user_id).await.unwrap();
             tokio::spawn(async move {
                 let mut query = VideoUpdateQuery::default();
                 let result = match media::process_video(media_data).await {
@@ -374,21 +374,21 @@ async fn media_upload(
                         println!("FFMPEG ERROR: {:?}", e.ffmpeg_error);
                         query.processing = Some(false);
                         query.processing_error = Some(e.error);
-                        Video::update(&state.db, id, query).await.unwrap();
+                        query.update(&state.rwdb, id).await.unwrap();
                         sleep(Duration::from_secs(10)).await;
-                        Video::delete(&state.db, id).await.unwrap();
+                        Video::delete(&state.rwdb, id).await.unwrap();
                         return;
                     }
                 };
                 query.processing = Some(false);
                 query.thumbnail = Some(result.thumbnail);
                 query.mp4_480p = Some(result.mp4_480p);
-                Video::update(&state.db, id, query).await.unwrap();
+                query.update(&state.rwdb, id).await.unwrap();
             });
             encode_media_id(MediaType::Video, id)
         }
         "audio" => {
-            let id = Audio::insert(&state.db, claims.user_id).await.unwrap();
+            let id = Audio::insert(&state.rwdb, claims.user_id).await.unwrap();
             tokio::spawn(async move {
                 let mut query = AudioUpdateQuery::default();
                 let result = match media::process_audio(media_data).await {
@@ -397,9 +397,9 @@ async fn media_upload(
                         println!("FFMPEG ERROR: {:?}", e.ffmpeg_error);
                         query.processing = Some(false);
                         query.processing_error = Some(e.error);
-                        Audio::update(&state.db, id, query).await.unwrap();
+                        query.update(&state.rwdb, id).await.unwrap();
                         sleep(Duration::from_secs(10)).await;
-                        Audio::delete(&state.db, id).await.unwrap();
+                        Audio::delete(&state.rwdb, id).await.unwrap();
                         return;
                     }
                 };
@@ -420,7 +420,7 @@ async fn media_upload(
                 });
                 query.thumbnail = result.thumbnail;
                 query.mp3_128k = Some(result.mp3_128k);
-                Audio::update(&state.db, id, query).await.unwrap();
+                query.update(&state.rwdb, id).await.unwrap();
             });
             encode_media_id(MediaType::Audio, id)
         }
@@ -441,9 +441,10 @@ async fn media_check(
     let (media_type, num_id) = parse_media_id(&id)?;
     Ok(Json(match media_type {
         MediaType::Photo | MediaType::Banner | MediaType::ProfilePicture => {
-            let photo = Photo::find(&state.db, num_id)
-                .await
-                .map_err(|_| (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND))?;
+            let photo = Photo::find(&state.db, num_id).await.map_err(|e| {
+                println!("{e:?}");
+                (StatusCode::NOT_FOUND, MEDIA_NOT_FOUND)
+            })?;
             MediaResponse {
                 id,
                 processing: photo.processing,
